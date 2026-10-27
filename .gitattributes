@@ -1,0 +1,18 @@
+# 文本文件统一用 LF 存入仓库，检出时按平台转换。
+* text=auto
+
+# shader 与配置保持 LF，避免 dxc 报错位置因 CRLF 偏移
+*.hlsl text eol=lf
+*.hlsli text eol=lf
+*.json text eol=lf
+
+# PowerShell 脚本保持 CRLF（Windows PowerShell 5.1 对 LF 也能用，但 CRLF 最稳）
+*.ps1 text eol=crlf
+
+# 二进制资源
+*.png binary
+*.jpg binary
+*.hdr binary
+*.ktx2 binary
+*.glb binary
+*.bin binary

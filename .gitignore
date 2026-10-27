@@ -1,0 +1,23 @@
+# 构建输出（CMakePresets 统一放在 build/ 下）
+/build/
+/out/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+CMakeUserPresets.json
+
+# 运行时生成
+*.rdc
+imgui.ini
+/logs/
+/captures/
+
+# 编译产物
+*.spv
+*.obj
+*.pdb
+*.ilk
