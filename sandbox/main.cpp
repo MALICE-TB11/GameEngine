@@ -4,6 +4,7 @@
 //   sandbox.exe --frames 300            冒烟测试：300 帧后退出，返回码 0 = 无错误
 //   sandbox.exe --frames 60 --capture out.png   额外保存最后一帧截图
 //   sandbox.exe --validation / --no-validation  强制开/关 validation layer
+//   sandbox.exe --renderdoc / --no-renderdoc    强制加载/不加载 RenderDoc（冒烟测试默认不加载）
 
 #include "App.h"
 
@@ -27,6 +28,10 @@ int main(int argc, char** argv) {
             opts.validation = true;
         } else if (arg == "--no-validation") {
             opts.validation = false;
+        } else if (arg == "--renderdoc") {
+            opts.renderdoc = true;
+        } else if (arg == "--no-renderdoc") {
+            opts.renderdoc = false;
         } else {
             LOG_WARN("未知参数: {}", arg);
         }

@@ -66,12 +66,17 @@ core ← platform ← rhi ← render ← 特性模块(terrain / ocean / medium /
 5. [engine/rhi/Device.cpp](engine/rhi/Device.cpp) → [engine/rhi/Swapchain.cpp](engine/rhi/Swapchain.cpp) —— Vulkan 初始化
 6. [engine/render/Renderer.cpp](engine/render/Renderer.cpp) —— 一帧的同步：fence、信号量、barrier
 7. [docs/01-窗口与主循环.md](docs/01-窗口与主循环.md)
+8. [tests/test_rendergraph.cpp](tests/test_rendergraph.cpp) —— 先看测试理解 barrier 规则
+9. [engine/render/RenderGraph.cpp](engine/render/RenderGraph.cpp) —— `rg::compile()` 与执行
+10. [engine/render/PipelineCache.cpp](engine/render/PipelineCache.cpp) —— 热重载与兜底
+11. [engine/render/passes/](engine/render/passes/) + [shaders/](shaders/) —— 具体的 pass 与 shader
+12. [docs/02-RHI与RenderGraph.md](docs/02-RHI与RenderGraph.md)
 
 ## 里程碑进度
 
 - [x] **M0 环境检查**：工具链、git、README、CLAUDE.md
 - [x] **M1 窗口与清屏**：GLFW + Vulkan 1.3 + 交换链、validation、缩放/最小化、ImGui 统计、固定步长主循环、config 热加载
-- [ ] M2 RHI + Render Graph
+- [x] **M2 RHI + Render Graph**：自动 barrier、瞬态贴图、pass 开关与默认资源、shader 热重载与错误材质、RenderDoc、GPU 计时、自由相机
 - [ ] M3 网格与 PBR
 - [ ] M4 地形与物理
 - [ ] M5 海面

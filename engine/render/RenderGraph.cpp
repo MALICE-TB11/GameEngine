@@ -1,0 +1,474 @@
+#include "render/RenderGraph.h"
+
+#include "core/Assert.h"
+#include "core/Log.h"
+#include "render/DefaultResources.h"
+#include "render/FrameContext.h"
+#include "rhi/GpuProfiler.h"
+
+#include <algorithm>
+#include <cmath>
+
+namespace eng::rg {
+
+namespace {
+// 「写」类访问。barrier 的 srcAccess 只需要包含写：读操作不产生需要「刷出」的数据，
+// 读之后再写（WAR）只需要执行依赖（等读完），不需要内存依赖。
+constexpr VkAccessFlags2 kWriteMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                                      VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_WRITE_BIT |
+                                      VK_ACCESS_2_TRANSFER_WRITE_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_HOST_WRITE_BIT;
+} // namespace
+
+bool isWrite(Access a) {
+    return a == Access::ColorWrite || a == Access::DepthWrite || a == Access::StorageWrite || a == Access::TransferDst;
+}
+
+bool isAttachment(Access a) {
+    return a == Access::ColorWrite || a == Access::DepthWrite || a == Access::DepthRead;
+}
+
+rhi::ImageState stateFor(Access a, PassType type) {
+    // 着色器阶段取决于 pass 类型：图形 pass 里顶点和片元着色器都可能采样（例如海面位移贴图在 VS 里采样）
+    const VkPipelineStageFlags2 shaderStage = type == PassType::Compute
+        ? VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT
+        : (VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
+    const VkPipelineStageFlags2 depthStages = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+    switch (a) {
+    case Access::ColorWrite:
+        return {VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    case Access::DepthWrite:
+        return {depthStages, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
+                VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL};
+    case Access::DepthRead:
+        return {depthStages, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL};
+    case Access::Sampled:
+        return {shaderStage, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    case Access::StorageRead:
+        return {shaderStage, VK_ACCESS_2_SHADER_STORAGE_READ_BIT, VK_IMAGE_LAYOUT_GENERAL};
+    case Access::StorageWrite:
+        return {shaderStage, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT, VK_IMAGE_LAYOUT_GENERAL};
+    case Access::TransferSrc:
+        return {VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL};
+    case Access::TransferDst:
+        return {VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL};
+    }
+    return {};
+}
+
+// =============================== 纯逻辑：barrier 推导 ===============================
+
+CompileResult compile(const std::vector<PassDecl>& passes, const std::vector<ResourceDecl>& resources) {
+    CompileResult out;
+    out.passes.resize(passes.size());
+    std::vector<rhi::ImageState> state(resources.size());
+    std::vector<bool> content(resources.size());
+    for (size_t r = 0; r < resources.size(); ++r) {
+        state[r] = resources[r].initial;
+        content[r] = resources[r].hasContent;
+    }
+
+    for (size_t p = 0; p < passes.size(); ++p) {
+        const PassDecl& pass = passes[p];
+        CompiledPass& cp = out.passes[p];
+        for (const AccessDecl& a : pass.accesses) cp.loadOps.push_back(a.load);
+        if (!pass.active) continue; // 被跳过的 pass：不改变任何资源的状态和「是否有内容」
+        cp.executed = true;
+
+        for (size_t k = 0; k < pass.accesses.size(); ++k) {
+            const uint32_t res = pass.accesses[k].resource;
+            Access access = pass.accesses[k].access;
+            LoadOp load = pass.accesses[k].load;
+
+            // ---- 容错 1：读一个本帧没人写过的资源 ----
+            if (!content[res] && !isWrite(access)) {
+                if (access == Access::DepthRead) {
+                    // 只读深度附件没法换成默认贴图：改为「写并清空」，深度测试全部通过
+                    access = Access::DepthWrite;
+                    load = LoadOp::Clear;
+                } else {
+                    cp.substituted.push_back(res); // 执行时绑定默认贴图，不需要 barrier
+                    continue;
+                }
+            }
+            // ---- 容错 2：上游写入者被跳过，本 pass 想 LOAD 旧内容 → 改为 CLEAR ----
+            if (isAttachment(access) && load == LoadOp::Load && !content[res]) load = LoadOp::Clear;
+            cp.loadOps[k] = load;
+
+            const rhi::ImageState target = stateFor(access, pass.type);
+            rhi::ImageState& cur = state[res];
+            const bool write = isWrite(access);
+            // 「丢弃旧内容」：没有内容可保留，或附件不 LOAD。此时 oldLayout 可以写 UNDEFINED，
+            // 驱动不用为保留数据做布局转换，开销更低。
+            const bool discard = write && (!content[res] || (isAttachment(access) && load != LoadOp::Load));
+            const bool prevWrite = (cur.access & kWriteMask) != 0;
+
+            if (cur.layout != target.layout || write || prevWrite) {
+                // 需要 barrier 的三种情况：
+                //   布局变化（必须显式转换）；本次是写（要等之前的读/写完成：WAR / WAW）；
+                //   之前是写（要让写入结果对本次访问可见：RAW）
+                rhi::ImageState from = cur;
+                from.access &= kWriteMask;
+                if (discard) from.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+                cp.barriers.push_back({res, from, target});
+                cur = target;
+            } else {
+                // 读之后再读、布局相同：不需要 barrier。把阶段合并起来，
+                // 之后若有写入，barrier 会同时等待这两处读取。
+                cur.stage |= target.stage;
+                cur.access |= target.access;
+            }
+            if (write) content[res] = true;
+        }
+    }
+
+    // ---- 帧末：外部资源过渡到要求的状态（交换链 → PRESENT） ----
+    for (uint32_t r = 0; r < resources.size(); ++r) {
+        if (!resources[r].hasFinal) continue;
+        if (!content[r] && resources[r].clearIfUnwritten) {
+            // 所有写它的 pass 都被关了：清成黑色，避免把未初始化的显存显示出来
+            rhi::ImageState from = state[r];
+            from.access &= kWriteMask;
+            from.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+            const rhi::ImageState to = stateFor(Access::TransferDst, PassType::Transfer);
+            out.clearBarriers.push_back({r, from, to});
+            out.clears.push_back(r);
+            state[r] = to;
+        }
+        rhi::ImageState from = state[r];
+        from.access &= kWriteMask;
+        out.finalBarriers.push_back({r, from, resources[r].final});
+        state[r] = resources[r].final;
+    }
+    out.endStates = std::move(state);
+    return out;
+}
+
+// =============================== GPU 部分 ===============================
+
+VkImageView PassContext::view(TextureHandle h) const {
+    ENG_ASSERT(h.valid() && h.index < graph->m_resources.size(), "无效的 TextureHandle");
+    const auto& subs = graph->m_substituted[passIndex];
+    if (std::find(subs.begin(), subs.end(), h.index) != subs.end())
+        return graph->fallbackView(graph->m_resources[h.index].desc.fallback);
+    return graph->m_resources[h.index].view;
+}
+
+PassBuilder& PassBuilder::color(TextureHandle t, LoadOp load) {
+    m_graph.addAccess(m_index, t, Access::ColorWrite, load);
+    return *this;
+}
+PassBuilder& PassBuilder::depth(TextureHandle t, LoadOp load) {
+    m_graph.addAccess(m_index, t, Access::DepthWrite, load);
+    return *this;
+}
+PassBuilder& PassBuilder::depthReadOnly(TextureHandle t) {
+    m_graph.addAccess(m_index, t, Access::DepthRead, LoadOp::Load);
+    return *this;
+}
+PassBuilder& PassBuilder::sampled(TextureHandle t) {
+    m_graph.addAccess(m_index, t, Access::Sampled, LoadOp::Load);
+    return *this;
+}
+PassBuilder& PassBuilder::storageRead(TextureHandle t) {
+    m_graph.addAccess(m_index, t, Access::StorageRead, LoadOp::Load);
+    return *this;
+}
+PassBuilder& PassBuilder::storageWrite(TextureHandle t) {
+    m_graph.addAccess(m_index, t, Access::StorageWrite, LoadOp::Load);
+    return *this;
+}
+PassBuilder& PassBuilder::transferSrc(TextureHandle t) {
+    m_graph.addAccess(m_index, t, Access::TransferSrc, LoadOp::Load);
+    return *this;
+}
+PassBuilder& PassBuilder::transferDst(TextureHandle t) {
+    m_graph.addAccess(m_index, t, Access::TransferDst, LoadOp::Load);
+    return *this;
+}
+PassBuilder& PassBuilder::require(std::function<bool()> ready) {
+    m_graph.m_passes[m_index].ready = std::move(ready);
+    return *this;
+}
+PassBuilder& PassBuilder::execute(std::function<void(PassContext&)> fn) {
+    m_graph.m_passes[m_index].fn = std::move(fn);
+    return *this;
+}
+
+void RenderGraph::init(rhi::Device& device, DefaultResources& defaults) {
+    m_device = &device;
+    m_defaults = &defaults;
+}
+
+void RenderGraph::shutdown() {
+    for (auto& [name, p] : m_pool) rhi::destroyImage(*m_device, p.image);
+    m_pool.clear();
+}
+
+void RenderGraph::beginFrame(VkExtent2D backbuffer, uint64_t frameNumber) {
+    m_backbuffer = backbuffer;
+    m_frameNumber = frameNumber;
+    m_resources.clear();
+    m_passes.clear();
+}
+
+TextureHandle RenderGraph::createTexture(const TextureDesc& desc) {
+    Resource r;
+    r.desc = desc;
+    r.format = desc.format;
+    if (desc.width && desc.height) {
+        r.extent = {desc.width, desc.height};
+    } else {
+        r.extent = {std::max(1u, uint32_t(std::lround(m_backbuffer.width * desc.scale))),
+                    std::max(1u, uint32_t(std::lround(m_backbuffer.height * desc.scale)))};
+    }
+    m_resources.push_back(std::move(r));
+    return {static_cast<uint32_t>(m_resources.size() - 1)};
+}
+
+TextureHandle RenderGraph::importTexture(const std::string& name, VkImage image, VkImageView view, VkFormat format,
+                                         VkExtent2D extent, const rhi::ImageState& initial, const rhi::ImageState& final) {
+    Resource r;
+    r.desc.name = name;
+    r.desc.fallback = Fallback::Black;
+    r.imported = true;
+    r.image = image;
+    r.view = view;
+    r.format = format;
+    r.extent = extent;
+    r.importInitial = initial;
+    r.importFinal = final;
+    m_resources.push_back(std::move(r));
+    return {static_cast<uint32_t>(m_resources.size() - 1)};
+}
+
+PassBuilder RenderGraph::addPass(const std::string& name, PassType type) {
+    m_passes.push_back({name, type, {}, {}, {}});
+    return PassBuilder(*this, static_cast<uint32_t>(m_passes.size() - 1));
+}
+
+void RenderGraph::addAccess(uint32_t pass, TextureHandle t, Access a, LoadOp load) {
+    ENG_ASSERT(t.valid() && t.index < m_resources.size(), "pass 声明了无效的资源");
+    auto& accesses = m_passes[pass].accesses;
+    // 一个 pass 对同一资源只能声明一种用法：否则需要的布局互相矛盾
+    for (const auto& existing : accesses) ENG_ASSERT(existing.resource != t.index, "同一 pass 重复声明了同一资源");
+    accesses.push_back({t.index, a, load});
+
+    Resource& r = m_resources[t.index];
+    switch (a) {
+    case Access::ColorWrite: r.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; break;
+    case Access::DepthWrite:
+    case Access::DepthRead: r.usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT; break;
+    case Access::Sampled: r.usage |= VK_IMAGE_USAGE_SAMPLED_BIT; break;
+    case Access::StorageRead:
+    case Access::StorageWrite: r.usage |= VK_IMAGE_USAGE_STORAGE_BIT; break;
+    case Access::TransferSrc: r.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT; break;
+    case Access::TransferDst: r.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT; break;
+    }
+}
+
+bool& RenderGraph::passEnabled(const std::string& name) {
+    return m_enabled.try_emplace(name, true).first->second;
+}
+
+VkImageView RenderGraph::fallbackView(Fallback f) const {
+    switch (f) {
+    case Fallback::White: return m_defaults->white().view;
+    case Fallback::FlatNormal: return m_defaults->flatNormal().view;
+    default: return m_defaults->black().view;
+    }
+}
+
+void RenderGraph::realizeTransients() {
+    for (Resource& r : m_resources) {
+        if (r.imported) continue;
+        // 总是带上 SAMPLED 与 TRANSFER_SRC：方便调试面板查看、截图，开销可以忽略
+        const VkImageUsageFlags usage = r.usage | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        auto [it, inserted] = m_pool.try_emplace(r.desc.name);
+        Pooled& p = it->second;
+        const bool mismatch = !p.image || p.image.format != r.format || p.image.extent.width != r.extent.width ||
+                              p.image.extent.height != r.extent.height || (p.usage & usage) != usage;
+        if (mismatch) {
+            if (p.image) {
+                // 旧贴图可能还被前一两帧使用：延迟到 GPU 用完再销毁
+                rhi::Image old = p.image;
+                m_device->deferDestroy([dev = m_device, old]() mutable { rhi::destroyImage(*dev, old); });
+            }
+            rhi::ImageDesc d;
+            d.width = r.extent.width;
+            d.height = r.extent.height;
+            d.format = r.format;
+            d.usage = usage;
+            d.name = r.desc.name.c_str();
+            p.image = rhi::createImage(*m_device, d);
+            p.usage = usage;
+            p.state = {};
+        }
+        p.lastUsedFrame = m_frameNumber;
+        r.image = p.image.image;
+        r.view = p.image.view;
+    }
+    // EXTEND: 很久没用的池化贴图（例如关掉的特效）可以在这里按 lastUsedFrame 回收，
+    //         或做「生命周期不重叠的瞬态贴图共用同一块显存」（aliasing）来省显存。
+}
+
+void RenderGraph::execute(VkCommandBuffer cmd, FrameContext& frame, rhi::GpuProfiler* profiler) {
+    realizeTransients();
+
+    // ---- 1. 组装纯逻辑输入 ----
+    std::vector<PassDecl> decls(m_passes.size());
+    m_report.assign(m_passes.size(), {});
+    for (size_t i = 0; i < m_passes.size(); ++i) {
+        const Pass& p = m_passes[i];
+        decls[i].name = p.name;
+        decls[i].type = p.type;
+        decls[i].accesses = p.accesses;
+        const bool enabled = passEnabled(p.name);
+        const bool ready = p.fn && (!p.ready || p.ready());
+        decls[i].active = enabled && ready;
+        m_report[i].name = p.name;
+        m_report[i].status = !enabled ? PassReport::Status::Disabled
+                           : !ready   ? PassReport::Status::NotReady
+                                      : PassReport::Status::Ran;
+    }
+    std::vector<ResourceDecl> res(m_resources.size());
+    for (size_t i = 0; i < m_resources.size(); ++i) {
+        const Resource& r = m_resources[i];
+        res[i].name = r.desc.name;
+        if (r.imported) {
+            res[i].initial = r.importInitial;
+            res[i].hasFinal = true;
+            res[i].final = r.importFinal;
+            res[i].clearIfUnwritten = true;
+        } else {
+            // 瞬态贴图的「初始状态」= 上一帧结束时的状态。布局会被当作 UNDEFINED 丢弃，
+            // 但阶段要保留：这样本帧第一次写入会等上一帧对它的读取结束（跨帧的 WAR 冒险）。
+            res[i].initial = m_pool[r.desc.name].state;
+        }
+    }
+
+    // ---- 2. 推导 barrier ----
+    const CompileResult compiled = compile(decls, res);
+    m_substituted.assign(m_passes.size(), {});
+
+    auto emitBarriers = [&](const std::vector<Barrier>& barriers) {
+        if (barriers.empty()) return;
+        std::vector<VkImageMemoryBarrier2> vk;
+        vk.reserve(barriers.size());
+        for (const Barrier& b : barriers) {
+            const Resource& r = m_resources[b.resource];
+            vk.push_back(rhi::makeImageBarrier(r.image, rhi::aspectOf(r.format), b.from, b.to));
+        }
+        // 一个 pass 的所有 barrier 合并成一次调用：驱动可以一起处理，比逐个提交高效
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.imageMemoryBarrierCount = static_cast<uint32_t>(vk.size());
+        dep.pImageMemoryBarriers = vk.data();
+        vkCmdPipelineBarrier2(cmd, &dep);
+    };
+
+    // ---- 3. 录制每个 pass ----
+    for (size_t i = 0; i < m_passes.size(); ++i) {
+        const Pass& pass = m_passes[i];
+        const CompiledPass& cp = compiled.passes[i];
+        m_substituted[i] = cp.substituted;
+        for (uint32_t s : cp.substituted) m_report[i].substituted.push_back(m_resources[s].desc.name);
+        if (!cp.executed) continue;
+
+        emitBarriers(cp.barriers);
+        rhi::beginLabel(cmd, pass.name.c_str());
+        const uint32_t scope = profiler ? profiler->begin(cmd, pass.name.c_str()) : UINT32_MAX;
+
+        PassContext ctx;
+        ctx.cmd = cmd;
+        ctx.frame = &frame;
+        ctx.graph = this;
+        ctx.passIndex = static_cast<uint32_t>(i);
+        ctx.extent = m_backbuffer;
+
+        if (pass.type == PassType::Graphics) {
+            // 根据声明自动组装 dynamic rendering 的附件
+            std::vector<VkRenderingAttachmentInfo> colors;
+            VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+            bool hasDepth = false;
+            bool extentSet = false;
+            for (size_t k = 0; k < pass.accesses.size(); ++k) {
+                const AccessDecl& a = pass.accesses[k];
+                if (!isAttachment(a.access)) continue;
+                const Resource& r = m_resources[a.resource];
+                if (!extentSet) {
+                    ctx.extent = r.extent;
+                    extentSet = true;
+                }
+                // compile 可能把「只读深度」改成「写并清空」：按改后的状态决定布局
+                const bool depthAccess = a.access != Access::ColorWrite;
+                const LoadOp load = cp.loadOps[k];
+                VkRenderingAttachmentInfo info{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+                info.imageView = r.view;
+                info.loadOp = load == LoadOp::Clear ? VK_ATTACHMENT_LOAD_OP_CLEAR
+                            : load == LoadOp::Load  ? VK_ATTACHMENT_LOAD_OP_LOAD
+                                                    : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+                info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+                info.clearValue = r.desc.clear;
+                if (depthAccess) {
+                    const bool readOnly = a.access == Access::DepthRead && load == LoadOp::Load;
+                    info.imageLayout = readOnly ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+                    depth = info;
+                    hasDepth = true;
+                } else {
+                    info.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                    colors.push_back(info);
+                }
+            }
+            VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+            ri.renderArea = {{0, 0}, ctx.extent};
+            ri.layerCount = 1;
+            ri.colorAttachmentCount = static_cast<uint32_t>(colors.size());
+            ri.pColorAttachments = colors.data();
+            ri.pDepthAttachment = hasDepth ? &depth : nullptr;
+            vkCmdBeginRendering(cmd, &ri);
+
+            // 负高度视口：把 Vulkan 的「Y 向下」翻转成「Y 向上」，
+            // 这样 GLM 的投影矩阵和 glTF 模型都不用改。需要 Vulkan 1.1（已是核心功能）。
+            VkViewport vp{0.0f, float(ctx.extent.height), float(ctx.extent.width), -float(ctx.extent.height), 0.0f, 1.0f};
+            VkRect2D scissor{{0, 0}, ctx.extent};
+            vkCmdSetViewport(cmd, 0, 1, &vp);
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+            pass.fn(ctx);
+            vkCmdEndRendering(cmd);
+        } else {
+            pass.fn(ctx);
+        }
+
+        if (profiler) profiler->end(cmd, scope);
+        rhi::endLabel(cmd);
+    }
+
+    // ---- 4. 帧末：清空没人写的外部资源，并过渡到要求的状态 ----
+    emitBarriers(compiled.clearBarriers);
+    for (uint32_t r : compiled.clears) {
+        const VkClearColorValue black{{0.0f, 0.0f, 0.0f, 1.0f}};
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdClearColorImage(cmd, m_resources[r].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &range);
+    }
+    emitBarriers(compiled.finalBarriers);
+
+    // ---- 5. 记下瞬态贴图的结束状态，供下一帧推导使用 ----
+    for (size_t i = 0; i < m_resources.size(); ++i)
+        if (!m_resources[i].imported) m_pool[m_resources[i].desc.name].state = compiled.endStates[i];
+
+    // GPU 耗时来自 profiler 读回的「两帧前」结果，按名字对应
+    if (profiler)
+        for (auto& rep : m_report)
+            for (const auto& r : profiler->results())
+                if (r.name == rep.name) rep.gpuMs = r.ms;
+}
+
+std::vector<RenderGraph::ResourceInfo> RenderGraph::resourceInfos() const {
+    std::vector<ResourceInfo> out;
+    for (const Resource& r : m_resources) out.push_back({r.desc.name, r.format, r.extent, r.imported});
+    return out;
+}
+
+} // namespace eng::rg

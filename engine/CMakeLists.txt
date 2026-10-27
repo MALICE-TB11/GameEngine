@@ -20,6 +20,7 @@ engine_module(core
         core/FileSystem.cpp
         core/Config.cpp
         core/ImageIO.cpp
+        core/Process.cpp
     DEPS engine_math spdlog::spdlog nlohmann_json::nlohmann_json
     PRIVATE_DEPS stb)
 # 让运行时能找到源码目录里的 config/、shaders/、assets/（热重载要改的是源码目录里的文件，
@@ -44,6 +45,10 @@ engine_module(rhi
         rhi/Device.cpp
         rhi/Swapchain.cpp
         rhi/Resources.cpp
+        rhi/Upload.cpp
+        rhi/Descriptors.cpp
+        rhi/Pipeline.cpp
+        rhi/GpuProfiler.cpp
         rhi/VmaImpl.cpp
     DEPS engine_platform volk GPUOpen::VulkanMemoryAllocator
     PRIVATE_DEPS vk-bootstrap::vk-bootstrap)
@@ -55,11 +60,30 @@ target_compile_definitions(engine_rhi PUBLIC VK_NO_PROTOTYPES
 engine_module(render
     SOURCES
         render/Renderer.cpp
-    DEPS engine_rhi imgui)
+        render/RenderGraph.cpp
+        render/PipelineCache.cpp
+        render/ShaderCompiler.cpp
+        render/DefaultResources.cpp
+        render/Mesh.cpp
+        render/Camera.cpp
+        render/passes/ForwardPass.cpp
+        render/passes/TonemapPass.cpp
+    DEPS engine_rhi)
+# 运行时热重载调用 dxc 的参数：与 cmake/Shaders.cmake 的构建时参数共用同一份定义
+string(JOIN " " ENGINE_DXC_FLAGS_STR ${ENGINE_DXC_FLAGS})
+file(TO_CMAKE_PATH "${Vulkan_dxc_EXECUTABLE}" ENGINE_DXC_PATH)
+target_compile_definitions(engine_render PRIVATE
+    ENGINE_DXC_EXECUTABLE="${ENGINE_DXC_PATH}"
+    ENGINE_DXC_FLAGS="${ENGINE_DXC_FLAGS_STR}"
+    ENGINE_SHADER_MODEL="${ENGINE_SHADER_MODEL}")
 
-# ---- debug：ImGui 面板 ----------------------------------------------------------------
+# ---- debug：ImGui 面板、RenderDoc ---------------------------------------------------------
 engine_module(debug
     SOURCES
         debug/ImGuiLayer.cpp
         debug/StatsPanel.cpp
+        debug/RenderPanels.cpp
+        debug/RenderDocCapture.cpp
     DEPS engine_render imgui)
+# renderdoc_app.h（MIT 许可，从 RenderDoc 安装目录复制）
+target_include_directories(engine_debug PRIVATE ${CMAKE_SOURCE_DIR}/external/renderdoc)

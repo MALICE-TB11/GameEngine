@@ -1,0 +1,23 @@
+# 编辑器统一设置（VS / VS Code / Rider 等都支持 EditorConfig）
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+
+# shader 必须是「UTF-8 带 BOM」：dxc 用 -Zi 嵌入源码时，无 BOM 的中文注释会导致
+# "error code 0x80070459"。scripts/fix_shader_encoding.ps1 会自动修正。
+[*.{hlsl,hlsli}]
+charset = utf-8-bom
+
+[*.ps1]
+end_of_line = crlf
+
+[*.{json,yml,yaml,cmake}]
+indent_size = 2
+
+[CMakeLists.txt]
+indent_size = 4

@@ -54,6 +54,11 @@ void Window::setSize(int width, int height) {
     glfwSetWindowSize(m_window, width, height);
 }
 
+void Window::setCursorCaptured(bool captured) {
+    const int mode = captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL;
+    if (glfwGetInputMode(m_window, GLFW_CURSOR) != mode) glfwSetInputMode(m_window, GLFW_CURSOR, mode);
+}
+
 ivec2 Window::framebufferSize() const {
     int w = 0, h = 0;
     glfwGetFramebufferSize(m_window, &w, &h);

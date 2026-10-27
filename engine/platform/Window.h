@@ -30,6 +30,8 @@ public:
     bool shouldClose() const;
     void requestClose();
     void setSize(int width, int height); // 冒烟测试用来触发交换链重建
+    // 隐藏并锁定鼠标（相机转视角时），鼠标移动量不受屏幕边缘限制
+    void setCursorCaptured(bool captured);
     ivec2 framebufferSize() const;
     bool isMinimized() const;
     // framebuffer 尺寸是否变过（读取后清零）。驱动不一定总会返回 OUT_OF_DATE，所以自己也记一份

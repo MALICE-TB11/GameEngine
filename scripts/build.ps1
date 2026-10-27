@@ -29,6 +29,7 @@ if (-not $env:VULKAN_SDK) { $env:VULKAN_SDK = [Environment]::GetEnvironmentVaria
 
 Push-Location $root
 try {
+    & (Join-Path $PSScriptRoot 'fix_shader_encoding.ps1')
     if (-not (Test-Path 'build\build.ninja')) {
         cmake --preset default
         if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }

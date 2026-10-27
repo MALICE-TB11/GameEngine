@@ -6,11 +6,27 @@
   },
   "renderer": {
     "vsync": true,
-    "clearColor": [0.02, 0.05, 0.08, 1.0]
+    "clearColor": [0.02, 0.05, 0.08, 1.0],
+    "sunElevationDeg": 35.0,
+    "sunAzimuthDeg": 45.0,
+    "exposure": 1.0
   },
   "loop": {
     "fixedHz": 60.0,
     "maxStepsPerFrame": 5,
     "maxFrameTime": 0.25
+  },
+  "camera": {
+    "fovDeg": 60.0,
+    "nearPlane": 0.05,
+    "moveSpeed": 5.0,
+    "sprintMultiplier": 4.0,
+    "lookSensitivity": 0.15,
+    "startPosition": [0.0, 2.5, 6.0],
+    "startYawDeg": -90.0,
+    "startPitchDeg": -15.0
+  },
+  "debug": {
+    "renderdoc": true
   }
 }
