@@ -1,0 +1,16 @@
+{
+  "window": {
+    "title": "Ocean Engine Sandbox",
+    "width": 1600,
+    "height": 900
+  },
+  "renderer": {
+    "vsync": true,
+    "clearColor": [0.02, 0.05, 0.08, 1.0]
+  },
+  "loop": {
+    "fixedHz": 60.0,
+    "maxStepsPerFrame": 5,
+    "maxFrameTime": 0.25
+  }
+}

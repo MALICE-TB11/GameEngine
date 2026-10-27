@@ -23,8 +23,6 @@
 
 ## 构建与运行
 
-> M1 起可用。
-
 ```powershell
 .\scripts\build.ps1 -Config Debug            # 配置 + 构建
 .\scripts\build.ps1 -Config Release -Test    # 构建 + 单元测试 + 冒烟测试
@@ -63,11 +61,16 @@ core ← platform ← rhi ← render ← 特性模块(terrain / ocean / medium /
 
 1. [CLAUDE.md](CLAUDE.md) —— 设计理念与约束
 2. [docs/00-环境与工程约定.md](docs/00-环境与工程约定.md)
+3. [sandbox/App.cpp](sandbox/App.cpp) —— 主循环：从这里看各模块如何串起来
+4. [engine/core/Time.h](engine/core/Time.h) —— 固定步长 + 插值
+5. [engine/rhi/Device.cpp](engine/rhi/Device.cpp) → [engine/rhi/Swapchain.cpp](engine/rhi/Swapchain.cpp) —— Vulkan 初始化
+6. [engine/render/Renderer.cpp](engine/render/Renderer.cpp) —— 一帧的同步：fence、信号量、barrier
+7. [docs/01-窗口与主循环.md](docs/01-窗口与主循环.md)
 
 ## 里程碑进度
 
 - [x] **M0 环境检查**：工具链、git、README、CLAUDE.md
-- [ ] M1 窗口与清屏
+- [x] **M1 窗口与清屏**：GLFW + Vulkan 1.3 + 交换链、validation、缩放/最小化、ImGui 统计、固定步长主循环、config 热加载
 - [ ] M2 RHI + Render Graph
 - [ ] M3 网格与 PBR
 - [ ] M4 地形与物理
