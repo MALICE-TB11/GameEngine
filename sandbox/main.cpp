@@ -5,6 +5,8 @@
 //   sandbox.exe --frames 60 --capture out.png   额外保存最后一帧截图
 //   sandbox.exe --validation / --no-validation  强制开/关 validation layer
 //   sandbox.exe --renderdoc / --no-renderdoc    强制加载/不加载 RenderDoc（冒烟测试默认不加载）
+//   sandbox.exe --model path/to/model.glb       加载指定 glTF 模型代替演示遗迹
+//   sandbox.exe --no-ui                         隐藏调试界面（F1 切换）
 
 #include "App.h"
 
@@ -28,6 +30,10 @@ int main(int argc, char** argv) {
             opts.validation = true;
         } else if (arg == "--no-validation") {
             opts.validation = false;
+        } else if (arg == "--no-ui") {
+            opts.hideUI = true;
+        } else if (arg == "--model" && i + 1 < argc) {
+            opts.model = argv[++i];
         } else if (arg == "--renderdoc") {
             opts.renderdoc = true;
         } else if (arg == "--no-renderdoc") {

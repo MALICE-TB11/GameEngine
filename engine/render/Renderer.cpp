@@ -60,7 +60,8 @@ bool Renderer::init(rhi::Device& device, Window& window, const RendererSettings&
     m_graph.init(device, m_defaults);
     m_profiler.init(device);
 
-    m_forward.init(m_pipelines, kSceneColorFormat, kDepthFormat);
+    m_forward.init(device, m_pipelines, kSceneColorFormat, kDepthFormat);
+    m_sky.init(m_pipelines, kSceneColorFormat, kDepthFormat);
     m_tonemap.init(device, m_pipelines, m_swapchain.format());
     return true;
 }
@@ -107,6 +108,7 @@ void Renderer::shutdown() {
     vkDeviceWaitIdle(dev);
     m_device->flushDeferred();
     m_tonemap.shutdown();
+    m_forward.shutdown();
     m_profiler.shutdown();
     m_graph.shutdown();
     m_pipelines.shutdown();
@@ -142,14 +144,15 @@ void Renderer::updateFrameConstants(FrameResources& frame, const RenderView& vie
     c.screen = vec4(float(e.width), float(e.height), 1.0f / float(e.width), 1.0f / float(e.height));
     c.time = vec4(float(view.time), view.dt, float(m_frameNumber), 0.0f);
 
-    // 太阳方向：仰角/方位角 → 单位向量（指向太阳）
-    const float el = glm::radians(m_settings.sunElevationDeg), az = glm::radians(m_settings.sunAzimuthDeg);
-    c.sunDirection = vec4(std::cos(el) * std::cos(az), std::sin(el), std::cos(el) * std::sin(az), 3.0f);
-    c.sunColor = vec4(1.0f, 0.96f, 0.9f, 0.0047f);
-    c.skyZenith = vec4(vec3(m_settings.clearColor), 1.0f);
-    c.skyHorizon = vec4(vec3(m_settings.clearColor) * 2.0f, 1.0f);
-    c.groundColor = vec4(0.05f, 0.05f, 0.05f, 1.0f);
-    c.exposure = vec4(m_settings.exposure, 2.0f, 1.0f, 0.0f);
+    // 光照输入：所有材质共享这一份（见 shaders/common/lighting.hlsli）
+    const LightingSettings& L = m_lighting;
+    c.sunDirection = vec4(L.sunDirection(), L.sunIntensity);
+    c.sunColor = vec4(L.sunColor, glm::radians(L.sunAngularRadiusDeg));
+    c.skyZenith = vec4(L.skyZenith, L.skyIntensity);
+    c.skyHorizon = vec4(L.skyHorizon, L.sunHalo);
+    c.groundColor = vec4(L.groundColor, 0.0f);
+    c.exposure = vec4(L.exposure, float(L.tonemapper), L.ambientIntensity, 0.0f);
+    c.debug = vec4(float(m_settings.debugView), 0.0f, 0.0f, 0.0f);
     std::memcpy(frame.constants.mapped, &c, sizeof(c));
     // Upload 内存可能不是 HOST_COHERENT：flush 保证 GPU 看到 CPU 的写入
     vmaFlushAllocation(m_device->allocator(), frame.constants.allocation, 0, VK_WHOLE_SIZE);
@@ -277,6 +280,7 @@ void Renderer::buildGraph(uint32_t imageIndex, const DrawList& draws) {
 
     // ---- pass 顺序 = 执行顺序 ----
     m_forward.add(m_graph, sceneColor, depth, draws);
+    m_sky.add(m_graph, sceneColor, depth);
     m_tonemap.add(m_graph, sceneColor, backbuffer);
     m_graph.addPass("UI", rg::PassType::Graphics)
         .color(backbuffer, rg::LoadOp::Load) // 叠加在 tonemap 结果上；若 tonemap 被关，图会自动改成 CLEAR

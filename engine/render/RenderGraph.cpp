@@ -63,11 +63,26 @@ CompileResult compile(const std::vector<PassDecl>& passes, const std::vector<Res
     CompileResult out;
     out.passes.resize(passes.size());
     std::vector<rhi::ImageState> state(resources.size());
+    // 「最近一次写入」单独记录：写 → 读 → 写/布局转换 时，中间那个 barrier 只让写入对「读」可见；
+    // 后面的写（布局转换本身也是写）仍需要显式等待最初那次写入（WAW）。
+    // 只跟踪 state 会在读取合并后丢失这个信息 —— 同步验证层正是为此报过错。
+    std::vector<rhi::ImageState> lastWrite(resources.size());
     std::vector<bool> content(resources.size());
     for (size_t r = 0; r < resources.size(); ++r) {
         state[r] = resources[r].initial;
+        lastWrite[r] = resources[r].lastWrite;
         content[r] = resources[r].hasContent;
     }
+    // 生成从 cur 到 target 的 barrier 源状态
+    auto sourceOf = [&](uint32_t res, bool writesOrTransitions) {
+        rhi::ImageState from = state[res];
+        from.access &= kWriteMask;
+        if (writesOrTransitions) {
+            from.stage |= lastWrite[res].stage;
+            from.access |= lastWrite[res].access;
+        }
+        return from;
+    };
 
     for (size_t p = 0; p < passes.size(); ++p) {
         const PassDecl& pass = passes[p];
@@ -104,12 +119,12 @@ CompileResult compile(const std::vector<PassDecl>& passes, const std::vector<Res
             const bool discard = write && (!content[res] || (isAttachment(access) && load != LoadOp::Load));
             const bool prevWrite = (cur.access & kWriteMask) != 0;
 
-            if (cur.layout != target.layout || write || prevWrite) {
+            const bool layoutChange = cur.layout != target.layout;
+            if (layoutChange || write || prevWrite) {
                 // 需要 barrier 的三种情况：
                 //   布局变化（必须显式转换）；本次是写（要等之前的读/写完成：WAR / WAW）；
                 //   之前是写（要让写入结果对本次访问可见：RAW）
-                rhi::ImageState from = cur;
-                from.access &= kWriteMask;
+                rhi::ImageState from = sourceOf(res, write || layoutChange);
                 if (discard) from.layout = VK_IMAGE_LAYOUT_UNDEFINED;
                 cp.barriers.push_back({res, from, target});
                 cur = target;
@@ -119,7 +134,10 @@ CompileResult compile(const std::vector<PassDecl>& passes, const std::vector<Res
                 cur.stage |= target.stage;
                 cur.access |= target.access;
             }
-            if (write) content[res] = true;
+            if (write) {
+                content[res] = true;
+                lastWrite[res] = {target.stage, target.access & kWriteMask, VK_IMAGE_LAYOUT_UNDEFINED};
+            }
         }
     }
 
@@ -128,20 +146,21 @@ CompileResult compile(const std::vector<PassDecl>& passes, const std::vector<Res
         if (!resources[r].hasFinal) continue;
         if (!content[r] && resources[r].clearIfUnwritten) {
             // 所有写它的 pass 都被关了：清成黑色，避免把未初始化的显存显示出来
-            rhi::ImageState from = state[r];
-            from.access &= kWriteMask;
+            rhi::ImageState from = sourceOf(r, true);
             from.layout = VK_IMAGE_LAYOUT_UNDEFINED;
             const rhi::ImageState to = stateFor(Access::TransferDst, PassType::Transfer);
             out.clearBarriers.push_back({r, from, to});
             out.clears.push_back(r);
             state[r] = to;
+            lastWrite[r] = {to.stage, to.access, VK_IMAGE_LAYOUT_UNDEFINED};
         }
-        rhi::ImageState from = state[r];
-        from.access &= kWriteMask;
-        out.finalBarriers.push_back({r, from, resources[r].final});
+        // 帧末过渡（例如 → PRESENT）是一次布局转换，同样要等最近一次写入
+        out.finalBarriers.push_back({r, sourceOf(r, true), resources[r].final});
         state[r] = resources[r].final;
+        lastWrite[r] = {};
     }
     out.endStates = std::move(state);
+    out.endWrites = std::move(lastWrite);
     return out;
 }
 
@@ -345,6 +364,7 @@ void RenderGraph::execute(VkCommandBuffer cmd, FrameContext& frame, rhi::GpuProf
             // 瞬态贴图的「初始状态」= 上一帧结束时的状态。布局会被当作 UNDEFINED 丢弃，
             // 但阶段要保留：这样本帧第一次写入会等上一帧对它的读取结束（跨帧的 WAR 冒险）。
             res[i].initial = m_pool[r.desc.name].state;
+            res[i].lastWrite = m_pool[r.desc.name].lastWrite;
         }
     }
 
@@ -455,8 +475,12 @@ void RenderGraph::execute(VkCommandBuffer cmd, FrameContext& frame, rhi::GpuProf
     emitBarriers(compiled.finalBarriers);
 
     // ---- 5. 记下瞬态贴图的结束状态，供下一帧推导使用 ----
-    for (size_t i = 0; i < m_resources.size(); ++i)
-        if (!m_resources[i].imported) m_pool[m_resources[i].desc.name].state = compiled.endStates[i];
+    for (size_t i = 0; i < m_resources.size(); ++i) {
+        if (m_resources[i].imported) continue;
+        Pooled& p = m_pool[m_resources[i].desc.name];
+        p.state = compiled.endStates[i];
+        p.lastWrite = compiled.endWrites[i];
+    }
 
     // GPU 耗时来自 profiler 读回的「两帧前」结果，按名字对应
     if (profiler)

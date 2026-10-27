@@ -11,12 +11,14 @@
 #include "platform/Input.h"
 #include "platform/Window.h"
 #include "render/Camera.h"
-#include "render/Mesh.h"
+#include "render/Lighting.h"
 #include "render/Renderer.h"
 #include "rhi/Device.h"
+#include "world/Scene.h"
 
 #include <filesystem>
 #include <optional>
+#include <string>
 
 namespace eng {
 
@@ -25,10 +27,19 @@ struct LaunchOptions {
     std::filesystem::path capturePath;  // --capture file.png：退出前截最后一帧
     std::optional<bool> validation;     // --validation / --no-validation，覆盖默认值
     std::optional<bool> renderdoc;      // --renderdoc / --no-renderdoc，覆盖 config
+    std::string model;                  // --model path.glb：替换 config 里的演示模型
+    bool hideUI = false;                // --no-ui：启动时隐藏调试界面（截图用），F1 切换
 };
 
 struct DebugSettings {
     bool renderdoc = false; // 启动时加载 RenderDoc（F12 捕获）
+};
+
+struct SceneSettings {
+    std::string model = "assets/models/ruins.glb"; // 工程相对路径或绝对路径
+    vec3 modelPosition{0.0f, 0.0f, -3.0f};
+    float modelScale = 1.0f;
+    float spinSpeedDeg = 45.0f;
 };
 
 class App {
@@ -40,19 +51,23 @@ private:
     bool init(const LaunchOptions& options);
     void shutdown();
     void loadSettings();
+    void saveSettings();
     void createScene();
     void fixedUpdate(double dt);
     void update(double dt);
-    void buildDrawList(float alpha);
     void drawUI();
+    void drawLightingPanel();
+    void drawMaterialPanel();
 
     LaunchOptions m_options;
     ConfigFile m_config;
     WindowSettings m_windowSettings;
     RendererSettings m_rendererSettings;
+    LightingSettings m_lighting;
     FixedStepSettings m_loopSettings;
     CameraSettings m_cameraSettings;
     DebugSettings m_debugSettings;
+    SceneSettings m_sceneSettings;
 
     Window m_window;
     Input m_input;
@@ -65,11 +80,10 @@ private:
     Clock m_clock;
     FlyCamera m_camera;
     double m_simTime = 0.0;
+    bool m_showUI = true;
 
-    // ---- M2 演示场景：一个按固定步长旋转的立方体（渲染时插值），几个静态立方体和地面 ----
-    GpuMesh m_cube;
-    Transform m_spinPrev, m_spinCurr; // 固定步长的上一步 / 当前步状态
-    float m_spinSpeedDeg = 45.0f;
+    Scene m_scene;
+    EntityId m_spinner = 0; // 按固定步长旋转的立方体（演示渲染插值）
     DrawList m_drawList;
     RenderView m_view;
 };

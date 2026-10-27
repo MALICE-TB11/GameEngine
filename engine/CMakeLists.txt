@@ -66,9 +66,12 @@ engine_module(render
         render/DefaultResources.cpp
         render/Mesh.cpp
         render/Camera.cpp
+        render/GltfLoader.cpp
         render/passes/ForwardPass.cpp
+        render/passes/SkyPass.cpp
         render/passes/TonemapPass.cpp
-    DEPS engine_rhi)
+    DEPS engine_rhi
+    PRIVATE_DEPS fastgltf::fastgltf)
 # 运行时热重载调用 dxc 的参数：与 cmake/Shaders.cmake 的构建时参数共用同一份定义
 string(JOIN " " ENGINE_DXC_FLAGS_STR ${ENGINE_DXC_FLAGS})
 file(TO_CMAKE_PATH "${Vulkan_dxc_EXECUTABLE}" ENGINE_DXC_PATH)
@@ -76,6 +79,12 @@ target_compile_definitions(engine_render PRIVATE
     ENGINE_DXC_EXECUTABLE="${ENGINE_DXC_PATH}"
     ENGINE_DXC_FLAGS="${ENGINE_DXC_FLAGS_STR}"
     ENGINE_SHADER_MODEL="${ENGINE_SHADER_MODEL}")
+
+# ---- world：场景/实体 ----------------------------------------------------------------------
+engine_module(world
+    SOURCES
+        world/Scene.cpp
+    DEPS engine_render)
 
 # ---- debug：ImGui 面板、RenderDoc ---------------------------------------------------------
 engine_module(debug

@@ -77,7 +77,9 @@ TEST_CASE("读后读：同布局不插 barrier，之后的写会等待全部读�
     // WAR：要同时等图形 pass 的片元着色器和 compute pass 的读取
     CHECK((war.from.stage & VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT) != 0);
     CHECK((war.from.stage & VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT) != 0);
-    CHECK(war.from.access == VK_ACCESS_2_NONE); // 只需执行依赖
+    // 读不需要内存依赖；但隔着读者的「上一次写」（Produce）仍要包含进来（WAW）
+    CHECK((war.from.access & VK_ACCESS_2_SHADER_SAMPLED_READ_BIT) == 0);
+    CHECK(war.from.access == VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
     CHECK(war.to.layout == VK_IMAGE_LAYOUT_GENERAL);
 }
 
@@ -161,6 +163,26 @@ TEST_CASE("只读深度但上游被关：改为清空并写入，不读未初始
     CHECK(r.passes[1].loadOps[0] == LoadOp::Clear);
     REQUIRE(r.passes[1].barriers.size() == 1);
     CHECK(r.passes[1].barriers[0].to.layout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+}
+
+TEST_CASE("回归：写 → 只读 → 下一帧写（布局转换）要等最初那次写（WAW 跨过读者）") {
+    // 实际遇到的同步验证报错：Forward 写深度 → Sky 只读深度 → 下一帧 Forward 清深度。
+    // 第二个 barrier 只让写入对「读」可见，第三帧的布局转换（也是写）必须显式等待最初的写。
+    const std::vector<PassDecl> passes = {
+        pass("Forward", {{0, Access::DepthWrite, LoadOp::Clear}}),
+        pass("Sky", {{0, Access::DepthRead}}),
+    };
+    const CompileResult frame1 = compile(passes, {transient("Depth")});
+
+    ResourceDecl next = transient("Depth");
+    next.initial = frame1.endStates[0];
+    next.lastWrite = frame1.endWrites[0];
+    const CompileResult frame2 = compile(passes, {next});
+    REQUIRE(frame2.passes[0].barriers.size() == 1);
+    const Barrier& b = frame2.passes[0].barriers[0];
+    CHECK((b.from.access & VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT) != 0);
+    CHECK((b.from.stage & VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT) != 0);
+    CHECK(b.from.layout == VK_IMAGE_LAYOUT_UNDEFINED);
 }
 
 TEST_CASE("跨帧：瞬态贴图的初始阶段来自上一帧，第一次写入要等它（WAR）") {

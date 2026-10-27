@@ -43,6 +43,10 @@ validation layer（Debug 默认开）、所有 Vulkan 对象 debug name、Render
 - 注释写「为什么」，Vulkan 同步/barrier/描述符等难点要讲清楚；注释用中文。
 - 不要过度抽象：每个抽象要说明它服务于后面哪个功能，能直白就直白。
 - 扩展点用 `// EXTEND:` 标注，并在对应 docs 笔记的「扩展点」一节汇总。
+- shader 文件（.hlsl/.hlsli）必须是 **UTF-8 带 BOM**：dxc 用 `-Zi` 嵌入含中文的源码时，无 BOM 会报 `0x80070459`。`build.ps1` 会自动修正。
+- PowerShell 脚本保持纯 ASCII（Windows PowerShell 5.1 按 ANSI 读无 BOM 文件）。
+- 新增渲染 pass：在 `engine/render/passes/` 建文件（init 建管线，add 声明读写），在 `Renderer::buildGraph` 中按顺序调用；不要手写 barrier。
+- 新增材质：只写「填 SurfaceData」的部分，光照统一调用 `ShadeSurface`，介质统一调用 `medium.hlsli`。
 - 命名：类型 `PascalCase`，函数 `camelCase`，成员 `m_` 前缀，常量 `kName`，命名空间 `eng`。
 - 错误处理：可恢复错误返回 `Result`/`bool` 并记日志；不可恢复用 `ENG_ASSERT`/`ENG_CHECK_VK`。
 

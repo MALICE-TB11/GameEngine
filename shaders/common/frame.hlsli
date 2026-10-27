@@ -15,7 +15,7 @@ struct FrameConstants
     float4 sunDirection; // xyz = 指向太阳，w = 照度
     float4 sunColor;     // rgb = 颜色，w = 角半径（弧度）
     float4 skyZenith;    // rgb = 天顶颜色，w = 天空亮度倍数
-    float4 skyHorizon;   // rgb = 地平线颜色
+    float4 skyHorizon;   // rgb = 地平线颜色，w = 太阳光晕强度
     float4 groundColor;  // rgb = 地面反弹颜色
     float4 exposure;     // x = 曝光，y = 色调映射模式，z = 环境光强度
     float4 debug;        // x = 调试视图

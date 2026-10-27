@@ -77,6 +77,9 @@ bool Device::init(const DeviceSettings& settings, GLFWwindow* window) {
     VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
     f13.dynamicRendering = VK_TRUE; // 不再需要 VkRenderPass/VkFramebuffer，直接指定附件开始渲染
     f13.synchronization2 = VK_TRUE; // 更清晰的 barrier API：stage 与 access 写在同一个结构里
+    // dxc 以 vulkan1.3 为目标时，把 HLSL 的 discard 编译成 OpDemoteToHelperInvocation：
+    // 被丢弃的像素继续作为「辅助调用」参与导数计算，避免 alpha 裁剪边缘的 mip 选择出错。
+    f13.shaderDemoteToHelperInvocation = VK_TRUE;
     VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     f12.hostQueryReset = VK_TRUE; // GPU 计时：在 CPU 端重置 timestamp query
     VkPhysicalDeviceVulkan11Features f11{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};

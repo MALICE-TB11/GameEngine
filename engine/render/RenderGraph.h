@@ -70,6 +70,7 @@ struct PassDecl {
 struct ResourceDecl {
     std::string name;
     rhi::ImageState initial;         // 本帧开始时的状态（瞬态贴图 = 上一帧结束时的状态）
+    rhi::ImageState lastWrite;       // 最近一次写入的 stage/access（跨过中间的读取仍要记住，见 compile）
     bool hasContent = false;         // 本帧开始时是否已有有效内容（瞬态贴图总是 false）
     bool hasFinal = false;           // 是否要求帧末处于特定状态（交换链 → PRESENT）
     rhi::ImageState final;
@@ -94,6 +95,7 @@ struct CompileResult {
     std::vector<uint32_t> clears;        // 需要帧末清屏的资源
     std::vector<Barrier> finalBarriers;  // 帧末过渡到要求状态
     std::vector<rhi::ImageState> endStates;
+    std::vector<rhi::ImageState> endWrites; // 每个资源帧末的「最近一次写入」，传给下一帧
 };
 
 CompileResult compile(const std::vector<PassDecl>& passes, const std::vector<ResourceDecl>& resources);
@@ -209,6 +211,7 @@ private:
         rhi::Image image;
         VkImageUsageFlags usage = 0;
         rhi::ImageState state;
+        rhi::ImageState lastWrite;
         uint64_t lastUsedFrame = 0;
     };
 

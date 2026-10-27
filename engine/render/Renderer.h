@@ -16,10 +16,12 @@
 #include "render/Camera.h"
 #include "render/DefaultResources.h"
 #include "render/FrameConstants.h"
+#include "render/Lighting.h"
 #include "render/PipelineCache.h"
 #include "render/RenderGraph.h"
 #include "render/RenderTypes.h"
 #include "render/passes/ForwardPass.h"
+#include "render/passes/SkyPass.h"
 #include "render/passes/TonemapPass.h"
 #include "rhi/Descriptors.h"
 #include "rhi/Device.h"
@@ -35,12 +37,12 @@ namespace eng {
 
 class Window;
 
+enum class DebugView : int { None = 0, Normal, Albedo, Roughness, Metallic, AO };
+
 struct RendererSettings {
     bool vsync = true;
-    vec4 clearColor{0.02f, 0.05f, 0.08f, 1.0f}; // 场景背景（线性 HDR 值）
-    float sunElevationDeg = 35.0f;
-    float sunAzimuthDeg = 45.0f;
-    float exposure = 1.0f;
+    vec4 clearColor{0.02f, 0.05f, 0.08f, 1.0f}; // Sky pass 关闭时的背景（线性 HDR 值）
+    int debugView = int(DebugView::None);
 };
 
 class Renderer {
@@ -54,6 +56,8 @@ public:
 
     void setSettings(const RendererSettings& s) { m_settings = s; }
     const RendererSettings& settings() const { return m_settings; }
+    void setLighting(const LightingSettings& l) { m_lighting = l; }
+    const LightingSettings& lighting() const { return m_lighting; }
 
     // 在最终画面上叠加 UI（ImGui）。回调在 dynamic rendering 作用域内调用，目标是交换链图像。
     using OverlayFn = std::function<void(VkCommandBuffer)>;
@@ -93,6 +97,7 @@ private:
     rhi::Device* m_device = nullptr;
     Window* m_window = nullptr;
     RendererSettings m_settings;
+    LightingSettings m_lighting;
     rhi::Swapchain m_swapchain;
     std::array<FrameResources, rhi::kFramesInFlight> m_frames{};
     uint64_t m_frameNumber = 0;
@@ -106,6 +111,7 @@ private:
     VkDescriptorPool m_globalPool = VK_NULL_HANDLE;
 
     ForwardPass m_forward;
+    SkyPass m_sky;
     TonemapPass m_tonemap;
 
     std::filesystem::path m_capturePath;

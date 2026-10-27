@@ -48,7 +48,11 @@ set(DOCTEST_WITH_TESTS OFF CACHE BOOL "" FORCE)
 set(DOCTEST_NO_INSTALL ON CACHE BOOL "" FORCE)
 FetchContent_Declare(doctest GIT_REPOSITORY https://github.com/doctest/doctest.git GIT_TAG v2.4.12 GIT_SHALLOW TRUE)
 
-FetchContent_MakeAvailable(glfw volk vk_bootstrap vma glm spdlog json imgui stb doctest)
+# ---- fastgltf：glTF 2.0 加载（基于 simdjson，比 tinygltf 快一个数量级） ------------------------
+set(FASTGLTF_COMPILE_AS_CPP20 ON CACHE BOOL "" FORCE)
+FetchContent_Declare(fastgltf GIT_REPOSITORY https://github.com/spnda/fastgltf.git GIT_TAG v0.8.0 GIT_SHALLOW TRUE)
+
+FetchContent_MakeAvailable(glfw volk vk_bootstrap vma glm spdlog json imgui stb doctest fastgltf)
 
 # volk 需要知道目标平台，才会加载 vkCreateWin32SurfaceKHR 等平台函数
 target_compile_definitions(volk PUBLIC VK_USE_PLATFORM_WIN32_KHR)
@@ -73,7 +77,7 @@ target_include_directories(stb INTERFACE ${stb_SOURCE_DIR})
 
 # 把第三方 target 收进 IDE 的 "external" 文件夹；
 # /utf-8：部分依赖的源码含非 ASCII 字符，中文 Windows 默认按 GBK 读会报 C4819
-foreach(t glfw volk vk-bootstrap imgui spdlog)
+foreach(t glfw volk vk-bootstrap imgui spdlog fastgltf)
     if(TARGET ${t})
         set_target_properties(${t} PROPERTIES FOLDER external)
         target_compile_options(${t} PRIVATE /utf-8)
