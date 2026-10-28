@@ -45,7 +45,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(OceanSettings, enabled, mode, wi
                                                 spread, swell, heightScale, choppiness, cascadeSizes, foamBias, foamIntensity, foamDecay,
                                                 shoreFoamWidth, foamTiling, absorption, scatterColor, sssColor, sssStrength, roughness,
                                                 refraction, reflection, gridRings, gridSegments, gridInner, gridOuter, gerstnerWaves, ripples,
-                                                rippleSize, rippleResolution, rippleMaxSpeed, rippleDamping, rippleSpongeWidth,
+                                                rippleSolver, rippleSize, rippleResolution, rippleMaxSpeed, rippleDamping, rippleSpongeWidth,
                                                 rippleSpongeStrength, rippleStrength, rippleNormal, rippleFoamSlope, rippleFoamGain,
                                                 rippleFoamDecay)
 } // namespace ocean
@@ -510,12 +510,13 @@ void App::sanitizeSettings() {
         LOG_WARN("配置项 ocean.rippleResolution = {} 不合法，已改为 {}", o.rippleResolution, rippleRes);
         o.rippleResolution = rippleRes;
     }
+    clampSetting(o.rippleSolver, 0, 1, "ocean.rippleSolver");
     clampSetting(o.rippleSize, 8.0f, 512.0f, "ocean.rippleSize");
     clampSetting(o.rippleMaxSpeed, 0.1f, 50.0f, "ocean.rippleMaxSpeed");
     clampSetting(o.rippleDamping, 0.0f, 20.0f, "ocean.rippleDamping");
     clampSetting(o.rippleSpongeWidth, 0.02f, 0.45f, "ocean.rippleSpongeWidth");
     clampSetting(o.rippleSpongeStrength, 0.0f, 100.0f, "ocean.rippleSpongeStrength");
-    clampSetting(o.rippleStrength, 0.0f, 100.0f, "ocean.rippleStrength");
+    clampSetting(o.rippleStrength, 0.0f, 20.0f, "ocean.rippleStrength");
     clampSetting(o.rippleNormal, 0.0f, 10.0f, "ocean.rippleNormal");
     clampSetting(o.rippleFoamSlope, 0.0f, 10.0f, "ocean.rippleFoamSlope");
     clampSetting(o.rippleFoamGain, 0.0f, 100.0f, "ocean.rippleFoamGain");
@@ -650,19 +651,21 @@ void App::fixedUpdate(double dt) {
     m_physics.step(float(dt));
     m_scenePhysics.syncAfterStep(m_scene);
 
-    // 局部交互：玩家搅动水面（入水越深、动得越快，波纹越大）。见 OceanRipples.h 的 RippleSource：
-    //   水平走动 → 偶极子：前面推高（船首波）、后面拉低（尾迹）
-    //   竖直运动 → 往下走（跳进水里）把水往下压，往上走（爬出水面）让水回填
+    // 局部交互：玩家在水里推开的水（体积流量，见 OceanRipples.h 的 RippleSource）：
+    //   水平走动 → 偶极子 push = (2·入水深度/r)·v：前面加水（船首波）、后面减水（尾迹）
+    //   竖直运动 → 往下沉，排开的水从周围冒出来；往上走，水回填。总量 = 身体截面积 × 竖直速度
     // 波纹区域以玩家为中心；每个物理步推进一步，暂停时不推进
     const physics::CharacterState& ps = m_player.state();
     const physics::CharacterDesc body{}; // 玩家用的是默认胶囊尺寸
     const vec2 playerXZ(ps.position.x, ps.position.z);
     std::vector<ocean::RippleSource> sources;
     const float water = m_ocean.heightAt(playerXZ.x, playerXZ.y, m_simTime);
-    const float submerged = std::clamp((water - ps.position.y) / body.height, 0.0f, 1.0f);
+    const float submerged = std::clamp(water - ps.position.y, 0.0f, body.height); // 入水深度（米）
     if (submerged > 0.0f && glm::length(ps.velocity) > 0.05f) {
-        const float k = m_oceanSettings.rippleStrength * submerged;
-        sources.push_back({playerXZ, body.radius * 1.5f, k * ps.velocity.y, k * vec2(ps.velocity.x, ps.velocity.z)});
+        const float k = m_oceanSettings.rippleStrength; // 艺术倍数，1 = 按上面的物理量
+        const float r = body.radius * 1.5f;             // 高斯半径比身体略大：格子 0.25 m 时也有几个格子宽
+        const float vertical = -k * ps.velocity.y * (body.radius * body.radius) / (r * r); // ∫q = 截面积 × (-v_y)
+        sources.push_back({playerXZ, r, vertical, k * (2.0f * submerged / r) * vec2(ps.velocity.x, ps.velocity.z)});
     }
     m_ocean.queueRippleStep(m_simTime, float(dt), playerXZ, sources);
 }

@@ -200,21 +200,31 @@ bool OceanSelfTest::afterFrame(ocean::OceanRenderer& ocean, rg::RenderGraph& gra
             m_waiting = true;
         } else if (m_waiting && checkReadback(ocean, "拖动风速之后", true)) {
             settings.ripples = true;
+            settings.rippleSolver = int(ocean::RippleSolver::Wave); // 先测波动方程，再测浅水方程
             enter(8);
         }
         break;
     }
 
-    case 8: { // 波纹：在岸外的水里激起一圈波纹，几步之后回读一步的输入、输出，用 CPU 的 rippleStep 逐格重算
+    case 8: { // 波纹：在岸外的水里激起一圈波纹，几步之后回读一步的输入、输出，用 CPU 参考逐格重算。两种求解器各一遍
         // 玩家出生在岸边（App 在自测时设置），区域中心 = 玩家；往 +Z 15 米是水，且还在吸收层以内
+        const bool shallow = settings.rippleSolver == int(ocean::RippleSolver::Shallow);
+        const char* label = shallow ? "波纹·浅水方程" : "波纹·波动方程";
         if (m_frame == 1) ocean.splash(ocean.rippleStats().center + vec2(0.0f, 15.0f), 1.0f, 0.3f);
         if (m_frame == 8) ocean.requestRippleCheck();
         if (m_rippleChecked) {
-            // 校验完再等一会儿：约 0.5 秒时波纹已经扩散成一圈、还没衰减太多，这时截图（--capture），约 1.2 秒后进入下一步
-            if (m_frame == 30) m_captureRequested = true;
+            // 校验完再等一会儿：约 0.5 秒时波纹已经扩散成一圈、还没衰减太多，这时截图（--capture，浅水方程那一遍），
+            // 约 1.2 秒后进入下一步
+            if (m_frame == 30 && shallow) m_captureRequested = true;
             if (m_frame >= 72) {
-                graph.passEnabled("OceanRipples") = false;
-                enter(9);
+                m_rippleChecked = false;
+                if (!shallow) {
+                    settings.rippleSolver = int(ocean::RippleSolver::Shallow); // 换求解器：状态从平静水面重新开始
+                    enter(8);
+                } else {
+                    graph.passEnabled("OceanShallowFlux") = false;
+                    enter(9);
+                }
             }
             break;
         }
@@ -222,19 +232,21 @@ bool OceanSelfTest::afterFrame(ocean::OceanRenderer& ocean, rg::RenderGraph& gra
         std::optional<ocean::RippleReadback> rb = ocean.takeRippleCheck();
         if (!rb) break;
         const ocean::OceanCheck c = ocean::OceanRenderer::verifyRipples(*rb);
-        if (!c.ok) fail("波纹：GPU 一步的结果与 CPU 参考不一致 —— " + c.summary);
-        else if (!rb->hadHistory) fail("波纹：校验的那一步没有读上一步的状态");
-        else LOG_INFO("海洋自测 [波纹] 通过：{}", c.summary);
+        if (!c.ok) fail(std::string(label) + "：GPU 一步的结果与 CPU 参考不一致 —— " + c.summary);
+        else if (!rb->hadHistory) fail(std::string(label) + "：校验的那一步没有读上一步的状态");
+        else if ((rb->params.solver == ocean::RippleSolver::Shallow) != shallow) fail(std::string(label) + "：回读到的是另一种求解器的结果");
+        else LOG_INFO("海洋自测 [{}] 通过：{}", label, c.summary);
         m_rippleChecked = true;
         break;
     }
 
-    case 9: // 关掉波纹：pass 仍出现在列表里（面板能重新打开），海面照常
+    case 9: // 关掉浅水方程的第一步：它仍出现在列表里（面板能重新打开），第二步不再出现，海面照常
         if (m_frame == 3) {
-            expectStatus(graph, "OceanRipples", rg::PassReport::Status::Disabled);
+            expectStatus(graph, "OceanShallowFlux", rg::PassReport::Status::Disabled);
+            if (findPass(graph, "OceanShallowDepth")) fail("第一步被关掉后，浅水方程的第二步仍出现在列表里");
             expectStatus(graph, "Ocean", rg::PassReport::Status::Ran);
-            LOG_INFO("海洋自测 [关闭 OceanRipples] 检查完成");
-            graph.passEnabled("OceanRipples") = true;
+            LOG_INFO("海洋自测 [关闭 OceanShallowFlux] 检查完成");
+            graph.passEnabled("OceanShallowFlux") = true;
             settings.mode = int(ocean::OceanMode::Gerstner);
             enter(10);
         }

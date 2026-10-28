@@ -1,6 +1,7 @@
 #include "rhi/Resources.h"
 
 #include "core/Assert.h"
+#include "core/Log.h"
 #include "rhi/Device.h"
 
 #include <algorithm>
@@ -72,7 +73,12 @@ Image createImage(Device& device, const ImageDesc& desc) {
         ai.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
 
     Image img;
-    ENG_CHECK_VK(vmaCreateImage(device.allocator(), &ci, &ai, &img.image, &img.allocation, nullptr));
+    const VkResult result = vmaCreateImage(device.allocator(), &ci, &ai, &img.image, &img.allocation, nullptr);
+    // 失败时先说清楚是哪张图、多大：显存不足多半是某个尺寸算错了，光有错误码很难定位
+    if (result != VK_SUCCESS)
+        LOG_ERROR("创建贴图 {} 失败：{}×{}×{} 层，格式 {}，{} 级 mip", desc.name ? desc.name : "(未命名)", desc.width, desc.height, ci.arrayLayers,
+                  int(desc.format), desc.mipLevels);
+    ENG_CHECK_VK(result);
     img.format = desc.format;
     img.extent = {desc.width, desc.height};
     img.mipLevels = desc.mipLevels;

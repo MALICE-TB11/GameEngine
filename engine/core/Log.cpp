@@ -57,11 +57,15 @@ protected:
 
 std::shared_ptr<RingSink> g_ring;
 std::shared_ptr<ErrorCounterSink> g_errors;
+UINT g_savedConsoleCp = 0; // 启动前控制台的代码页：退出时恢复
 
 } // namespace
 
 void init(const std::string& logFilePath) {
     // 日志里有中文。Windows 控制台默认代码页是 GBK(936)，不切到 UTF-8 会显示乱码。
+    // 控制台是和启动它的终端共用的：退出时要切回去（见 shutdown），否则之后在同一个窗口里构建，
+    // 中文版 cl 的 /showIncludes 输出换了编码，Ninja 会悄悄丢掉头文件依赖（见 scripts/build.ps1）
+    g_savedConsoleCp = GetConsoleOutputCP();
     SetConsoleOutputCP(CP_UTF8);
     std::filesystem::create_directories(std::filesystem::path(logFilePath).parent_path());
 
@@ -80,6 +84,7 @@ void init(const std::string& logFilePath) {
 
 void shutdown() {
     spdlog::shutdown();
+    if (g_savedConsoleCp != 0) SetConsoleOutputCP(g_savedConsoleCp);
 }
 
 std::vector<Entry> recent() {

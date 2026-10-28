@@ -6,7 +6,8 @@
 //   OceanFFTRows    compute  横向逆 FFT                                       读 Spectrum 写 FFTTemp
 //   OceanFFTColumns compute  纵向逆 FFT                                       读 FFTTemp  写 Spatial
 //   OceanAssemble   compute  → 位移/导数贴图，泡沫累积（读上一帧的泡沫历史）    读 Spatial  写 Displacement
-//   OceanRipples    compute  局部交互：玩家周围的波纹，每个物理固定步一个（暂停时没有）  读写 RipplesA/B
+//   OceanRipples    compute  局部交互（波动方程）：玩家周围的波纹，每个物理固定步一个（暂停时没有）  读写 RipplesA/B
+//   或 OceanShallowFlux + OceanShallowDepth（浅水方程，每步两个：先算流量、再更新水量）
 //   OceanPrepare    graphics 拷贝场景颜色、深度线性化（折射、水深）
 //   Ocean           graphics 画海面（大海浪 + 波纹）
 // Gerstner 模式没有前四个。
@@ -85,12 +86,14 @@ struct RippleStats {
     vec2 center{0.0f};
 };
 
-// 波纹回读（校验用）：同一帧里某一步的输入状态、输出状态和这一步的参数
+// 波纹回读（校验用）：同一帧里某一步的输入、输出和这一步的参数
 struct RippleReadback {
     RippleParams params;
     RippleStepInput step;
     bool hadHistory = false;
-    RippleGrid input, output;
+    RippleGrid input, output;     // 状态
+    RippleGrid fluxIn, fluxOut;   // 浅水方程的流量
+    std::vector<float> bed;       // 浅水方程本步的床面高度（GPU 第一步写的）
 };
 
 struct OceanCheck {
@@ -158,7 +161,8 @@ private:
                          std::shared_ptr<const OceanSpectrumData> spectrum, float phaseTime);
     // 本帧排队的波纹步 → compute pass；返回海面要采样的最新状态（没有波纹时无效句柄）
     rg::TextureHandle addRipplePasses(rg::RenderGraph& graph);
-    void addRippleCopyPass(rg::RenderGraph& graph, const char* name, rg::TextureHandle tex, uint32_t slot);
+    // 校验用的拷贝：slot = 回读缓冲里的哪一段；last = 这一步最后一个拷贝（执行时记录结果）
+    void addRippleCopyPass(rg::RenderGraph& graph, const char* name, rg::TextureHandle tex, uint32_t slot, bool last);
     void rebuildGrid();
 
     rhi::Device* m_device = nullptr;
@@ -179,7 +183,9 @@ private:
     PipelineHandle m_evolve = kInvalidPipeline, m_fft = kInvalidPipeline, m_assemble = kInvalidPipeline;
     PipelineHandle m_prepare = kInvalidPipeline, m_surface = kInvalidPipeline, m_surfaceWire = kInvalidPipeline;
     VkDescriptorSetLayout m_rippleLayout = VK_NULL_HANDLE;
-    PipelineHandle m_ripple = kInvalidPipeline;
+    VkDescriptorSetLayout m_shallowFluxLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_shallowDepthLayout = VK_NULL_HANDLE;
+    PipelineHandle m_ripple = kInvalidPipeline, m_shallowFlux = kInvalidPipeline, m_shallowDepth = kInvalidPipeline;
 
     std::shared_ptr<const OceanSpectrumData> m_spectrum; // 当前 GPU 在用的
     std::shared_ptr<PendingSpectrum> m_pending;          // 后台正在生成的（最多一个）
@@ -200,8 +206,7 @@ private:
     };
     OceanSeabed m_seabed;
     std::vector<PendingRipple> m_pendingRipples; // 物理步排队，下一次画海时变成 compute pass
-    std::vector<RippleSource> m_splashes;        // 下一步的一次性扰动（strength 暂存深度，米；排队时换算成加速度）
-    std::vector<RippleSource> m_splashFollowUps; // 上一步的水花：这一步加反向加速度抵消速度
+    std::vector<RippleSource> m_splashes;        // 下一步的一次性扰动（strength 暂存深度，米；排队时换算成体积流量）
     ivec2 m_rippleOrigin{0};
     RippleParams m_rippleParams;                 // 最近一步的参数（海面采样时的网格映射）
     bool m_rippleHasOrigin = false;

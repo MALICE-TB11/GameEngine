@@ -84,7 +84,7 @@ physics 只依赖 core（Jolt 是私有依赖）；world 用 physics 做场景�
 | `shaders/passes` | 全屏 pass（天空、色调映射、FXAA）、阴影深度 | M2–M4 |
 | `shaders/materials` | 材质（PBR、错误材质） | M2–M3 |
 | `shaders/terrain` | 地形顶点生成（SV_VertexID）、分层材质、地形阴影 | M4 |
-| `shaders/ocean` | 频谱演化、groupshared 逆 FFT、泡沫累积、波纹（波动方程）、水面着色 | M5 |
+| `shaders/ocean` | 频谱演化、groupshared 逆 FFT、泡沫累积、波纹（波动方程 / 浅水方程）、水面着色 | M5 |
 | `sandbox/` | 演示程序：主循环胶水、玩家与第三人称相机 | M1 起 |
 | `config/` | 可热加载的参数（JSON） | M1 起 |
 | `tools/` | 资源生成脚本、界面字形扫描（`update_ui_glyphs.py`） | M3 起 |
@@ -127,7 +127,8 @@ physics 只依赖 core（Jolt 是私有依赖）；world 用 physics 做场景�
 - [x] **M5 海面**：JONSWAP/TMA 频谱、三级联 256² GPU 逆 FFT（优化）与 Gerstner（参考）可切换、雅可比泡沫累积 + 岸边泡沫、菲涅尔反射 + RGB 吸收折射 + 太阳高光 + 浪尖透光；Render Graph 数组/持久贴图
 - [x] M5 第二轮审查：Render Graph「必需输入」规则（失败沿计算链传播）、FFT 传播方向与 Gerstner 统一、浅水波数求解、Nyquist 串扰、海浪走模拟时间、频谱后台生成；GPU 结果校验 `--selftest ocean`
 - [x] M5 后续 · 局部交互（参考）：以玩家为中心的二维波动方程（物理步推进、地形作反射边界、边缘吸收层、偶极子扰动源、尾迹泡沫），GPU 与 CPU 逐格校验
-- [ ] M5 后续 · 局部交互的第二种求解器（浅水方程或 iWave，待定）
+- [x] M5 后续 · 局部交互的第二种求解器：浅水方程（交错网格有符号流量、水量守恒、冲上沙滩、流速），与波动方程在面板切换；两者的 GPU 结果都与 CPU 逐格校验；扰动源统一为体积流量
+- [x] 构建：`build.ps1` 固定控制台代码页并检查 Ninja 的头文件依赖（UTF-8 终端里会悄悄丢失，导致增量构建漏编译）
 - [ ] M6 Medium + 水下 + 材质读取介质
 - [ ] M7 风格化角色材质
 

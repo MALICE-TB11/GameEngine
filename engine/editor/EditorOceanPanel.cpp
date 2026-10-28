@@ -87,6 +87,12 @@ void Editor::drawOceanPanel() {
     theme::helpMarker("玩家周围一块随玩家移动的网格，每个物理步解一次波动方程：\n"
                       "在水里走动、跳进水里会激起波纹；波纹撞到岸会反射，走到区域边缘被吸收层吃掉。\n"
                       "Render Graph 里的 OceanRipples 是它的 pass（每个物理步一个）。");
+    c |= ImGui::RadioButton("波动方程（参考）", &s.rippleSolver, int(ocean::RippleSolver::Wave));
+    ImGui::SameLine();
+    c |= ImGui::RadioButton("浅水方程", &s.rippleSolver, int(ocean::RippleSolver::Shallow));
+    theme::helpMarker("波动方程：最简单，岸是一堵反射墙。\n"
+                      "浅水方程：水量守恒，浪能冲上沙滩再退回，还能算出水的流速（M6 的介质查询用）。\n"
+                      "深水里两者完全相同（同一套离散），区别在岸边和大振幅。切换时波纹从平静水面重新开始。");
     const ocean::RippleStats& rs = o.rippleStats();
     ImGui::TextDisabled("格子 %.2f m · 本帧 %u 步 · 波速上限 %.1f m/s（稳定性条件）", rs.cellSize, rs.stepsThisFrame, rs.speedLimit);
     c |= ImGui::SliderFloat("区域边长", &s.rippleSize, 16.0f, 256.0f, "%.0f m");
@@ -99,7 +105,8 @@ void Editor::drawOceanPanel() {
     c |= ImGui::SliderFloat("波速", &s.rippleMaxSpeed, 0.5f, 15.0f, "%.1f m/s");
     theme::helpMarker("深水里的传播速度；浅水按 √(g·水深) 自动变慢。\n超过稳定性条件（0.5 × 格子 / 物理步长）时自动截断。");
     c |= ImGui::SliderFloat("阻尼", &s.rippleDamping, 0.0f, 3.0f, "%.2f /s");
-    c |= ImGui::SliderFloat("搅动强度", &s.rippleStrength, 0.0f, 30.0f, "%.1f");
+    c |= ImGui::SliderFloat("搅动强度", &s.rippleStrength, 0.0f, 5.0f, "×%.2f");
+    theme::helpMarker("1 = 按物理量：身体在水里推开的水（入水深度 × 速度）。大于 1 是艺术夸张。");
     c |= ImGui::SliderFloat("法线强度##ripple", &s.rippleNormal, 0.0f, 4.0f, "%.2f");
     c |= ImGui::SliderFloat("吸收层宽度", &s.rippleSpongeWidth, 0.05f, 0.4f, "%.2f");
     c |= ImGui::SliderFloat("吸收层强度", &s.rippleSpongeStrength, 0.0f, 30.0f, "%.1f /s");

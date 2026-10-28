@@ -319,47 +319,177 @@ TEST_CASE("波纹：区域跟着玩家移动时，读上一步状态按格子偏
         for (uint32_t i = 4; i < 56; ++i) REQUIRE(shifted[j * 64 + i].x == plain[j * 64 + i + 3].x);
 }
 
-TEST_CASE("波纹：扰动源把水面往下压，泡沫只出现在陡的地方") {
+TEST_CASE("波纹：扰动源（体积流量）把水面往下压，泡沫只出现在陡的地方") {
     RippleFixture f(64);
     f.step.sourceCount = 1;
     f.step.origin = vec2(0.0f);
-    f.step.sources[0] = {vec2(8.0f, 8.0f), 0.5f, -200.0f}; // 区域中心（32 格 × 0.25 m）
+    f.step.sources[0] = {vec2(8.0f, 8.0f), 0.5f, -2.0f}; // 区域中心（32 格 × 0.25 m），每秒抽走 2 m 的水
     f.p.foamSlope = 0.05f;
     f.p.foamGain = 10.0f;
     f.run(5);
     CHECK(f.at(31, 31) < -1e-3f);           // 中心被压下去
-    CHECK(f.grid[31 * 64 + 31].w == 10.0f); // 第 4 个分量记录水深
+    CHECK(f.grid[31 * 64 + 31].w == 10.0f); // 第 4 个分量记录静水深
     CHECK(f.grid[2 * 64 + 2].z == 0.0f);    // 远处平静：没有泡沫
     float maxFoam = 0.0f;
     for (const vec4& v : f.grid) maxFoam = std::max(maxFoam, v.z);
     CHECK(maxFoam > 0.0f);
 }
 
-TEST_CASE("波纹：偶极子源（走动）前面推高、后面拉低；水花「压一下再抵消速度」后扩散成一圈，中心不会越陷越深") {
+TEST_CASE("波纹：偶极子源（走动）前面加水、后面减水；水花扩散成一圈，中心不会越陷越深") {
     SUBCASE("偶极子") {
         RippleFixture f(64);
         f.step.sourceCount = 1;
-        f.step.sources[0] = {vec2(8.0f, 8.0f), 0.6f, 0.0f, vec2(40.0f, 0.0f)}; // 向 +X 走
+        f.step.sources[0] = {vec2(8.0f, 8.0f), 0.6f, 0.0f, vec2(4.0f, 0.0f)}; // 向 +X 走
         f.run(3);
         CHECK(f.at(34, 32) > 0.0f); // 前方（+X）隆起
         CHECK(f.at(29, 32) < 0.0f); // 后方凹陷
     }
     SUBCASE("水花") {
+        // 一步抽走 0.3 m（q = -深度/Δt）：留下一个静止的凹坑，之后像石子入水一样向外扩散
         const float depthSplash = 0.3f;
-        auto splash = [&](bool cancelVelocity) {
-            RippleFixture f(96);
-            const float a = depthSplash / (f.step.dt * f.step.dt);
-            f.step.sourceCount = 1;
-            f.step.sources[0] = {vec2(12.0f, 12.0f), 1.0f, -a};
-            f.run(1);
-            f.step.sources[0].strength = cancelVelocity ? a : 0.0f;
-            f.run(1);
-            f.step.sourceCount = 0;
-            f.run(60);
-            return f.at(47, 47); // 中心附近
-        };
-        const float withCancel = splash(true), impulseOnly = splash(false);
-        CHECK(std::abs(withCancel) < 0.1f * depthSplash);   // 凹坑扩散成波纹走了
-        CHECK(impulseOnly < -2.0f * depthSplash);           // 只压不抵消：中心一直往下陷
+        RippleFixture f(96);
+        f.step.sourceCount = 1;
+        f.step.sources[0] = {vec2(12.0f, 12.0f), 1.0f, -depthSplash / f.step.dt};
+        f.run(1);
+        CHECK(f.at(47, 47) == doctest::Approx(-depthSplash).epsilon(0.05)); // 第一步正好挖下去约 0.3 m
+        f.step.sourceCount = 0;
+        f.run(60);
+        CHECK(std::abs(f.at(47, 47)) < 0.1f * depthSplash); // 凹坑扩散成波纹走了
     }
+}
+
+// ---------------------------------------------------------------- 浅水方程
+
+namespace {
+
+// 浅水方程的小网格：床面高度 bed（海面在 y = 0），状态 (η, η⁻, 泡沫, δ)，流量 (Fx, Fz, 0, 0)
+struct ShallowFixture {
+    RippleParams p;
+    std::vector<float> bed;
+    RippleGrid state, flux;
+    RippleStepInput step;
+    explicit ShallowFixture(uint32_t n = 96, float depth = 10.0f, float speed = 3.0f) {
+        p.solver = RippleSolver::Shallow;
+        p.n = n;
+        p.cellSize = 0.25f;
+        p.maxSpeed = speed;
+        p.damping = 0.0f;
+        p.spongeStrength = 0.0f;
+        p.spongeCells = 8.0f;
+        bed.assign(size_t(n) * n, -depth);
+        state.assign(size_t(n) * n, vec4(0.0f));
+        flux.assign(size_t(n) * n, vec4(0.0f));
+        step.dt = 1.0f / 60.0f;
+    }
+    void bump(float ci, float cj, float amplitude, float radiusCells) {
+        for (uint32_t j = 0; j < p.n; ++j)
+            for (uint32_t i = 0; i < p.n; ++i) {
+                const float d2 = (float(i) - ci) * (float(i) - ci) + (float(j) - cj) * (float(j) - cj);
+                const float u = amplitude * std::exp(-d2 / (radiusCells * radiusCells));
+                if (bed[j * p.n + i] < 0.0f) state[j * p.n + i] = vec4(u, u, 0.0f, u);
+            }
+    }
+    void run(int steps) {
+        RippleGrid ns, nf;
+        for (int k = 0; k < steps; ++k) {
+            shallowStep(state, flux, true, bed, 0.0f, p, step, ns, nf);
+            state.swap(ns);
+            flux.swap(nf);
+        }
+    }
+    double volume() const {
+        double v = 0.0;
+        for (const vec4& s : state) v += s.w;
+        return v * p.cellSize * p.cellSize;
+    }
+    float depthAt(uint32_t i, uint32_t j) const { return std::max(-bed[j * p.n + i], 0.0f) + state[j * p.n + i].w; }
+};
+
+} // namespace
+
+TEST_CASE("浅水方程：线性、水深超过截断深度时与波动方程逐格相同（同一套离散）") {
+    RippleFixture wave(64);
+    ShallowFixture shallow(64);
+    wave.bump(32.0f, 32.0f, 0.02f, 3.0f);
+    shallow.bump(32.0f, 32.0f, 0.02f, 3.0f);
+    wave.run(40);
+    shallow.run(40);
+    float maxU = 0.0f, maxDiff = 0.0f;
+    for (size_t c = 0; c < wave.grid.size(); ++c) {
+        maxU = std::max(maxU, std::abs(wave.grid[c].x));
+        maxDiff = std::max(maxDiff, std::abs(wave.grid[c].x - shallow.state[c].x));
+    }
+    CHECK(maxDiff < maxU * 1e-3f);
+}
+
+TEST_CASE("浅水方程：水量守恒（区域边缘封闭，吸收层只阻尼流量）") {
+    ShallowFixture f(64);
+    f.p.spongeStrength = 12.0f;
+    f.p.spongeCells = 16.0f;
+    f.bump(32.0f, 32.0f, 0.1f, 3.0f);
+    const double v0 = f.volume();
+    f.run(240);
+    CHECK(f.volume() == doctest::Approx(v0).epsilon(1e-3));
+}
+
+TEST_CASE("浅水方程：浪能冲上干沙滩，水深永远不为负") {
+    // 床面沿 +X 从 -2 m 升到 +1 m；在水里放一道 0.4 m 高的长浪
+    ShallowFixture f(128, 2.0f, 4.0f);
+    for (uint32_t j = 0; j < f.p.n; ++j)
+        for (uint32_t i = 0; i < f.p.n; ++i) f.bed[j * f.p.n + i] = -2.0f + 3.0f * float(i) / float(f.p.n - 1);
+    for (uint32_t j = 0; j < f.p.n; ++j)
+        for (uint32_t i = 0; i < f.p.n; ++i)
+            if (f.bed[j * f.p.n + i] < 0.0f) {
+                const float di = float(i) - 40.0f;
+                f.state[j * f.p.n + i].w = 0.4f * std::exp(-di * di / 30.0f);
+            }
+    auto shoreline = [&] {
+        uint32_t last = 0;
+        for (uint32_t i = 0; i < f.p.n; ++i)
+            if (f.depthAt(i, 64) > kShallowWetDepth) last = i;
+        return last;
+    };
+    const uint32_t rest = shoreline();
+    uint32_t furthest = rest;
+    float minDepth = 1e9f;
+    for (int k = 0; k < 900; ++k) {
+        f.run(1);
+        furthest = std::max(furthest, shoreline());
+        for (uint32_t i = 0; i < f.p.n; ++i) minDepth = std::min(minDepth, f.depthAt(i, 64));
+    }
+    CHECK(float(furthest - rest) * f.p.cellSize > 2.0f); // 冲上去两米以上
+    CHECK(minDepth >= 0.0f);
+}
+
+TEST_CASE("浅水方程：流速指向水往低处流的方向") {
+    ShallowFixture f(64, 1.0f, 3.0f);
+    for (uint32_t j = 0; j < 64; ++j)
+        for (uint32_t i = 0; i < 32; ++i) f.state[j * 64 + i].w = 0.1f; // 左半边水多 10 cm
+    f.run(5);
+    const vec2 v = shallowVelocity(f.state, f.flux, f.bed, 0.0f, f.p, 32, 32);
+    CHECK(v.x > 0.05f);
+    CHECK(std::abs(v.y) < 1e-4f);
+}
+
+TEST_CASE("浅水方程：水花一步抽走的水量 = 深度 × 高斯面积 πr²") {
+    ShallowFixture f(64);
+    const float depthSplash = 0.3f, r = 1.0f;
+    f.step.sourceCount = 1;
+    f.step.sources[0] = {vec2(8.0f, 8.0f), r, -depthSplash / f.step.dt};
+    f.run(1);
+    CHECK(f.volume() == doctest::Approx(-depthSplash * kPi * r * r).epsilon(0.02));
+}
+
+TEST_CASE("浅水方程：区域移动时读上一步状态按格子偏移") {
+    ShallowFixture a(64), b(64);
+    a.bump(30.0f, 32.0f, 0.1f, 3.0f);
+    b.bump(30.0f, 32.0f, 0.1f, 3.0f);
+    a.run(10);
+    b.run(10);
+    RippleGrid sa, fa, sb, fb;
+    b.step.shift = ivec2(3, 0);
+    shallowStep(b.state, b.flux, true, b.bed, 0.0f, b.p, b.step, sb, fb);
+    shallowStep(a.state, a.flux, true, a.bed, 0.0f, a.p, a.step, sa, fa);
+    for (uint32_t j = 4; j < 60; ++j)
+        for (uint32_t i = 4; i < 56; ++i) REQUIRE(sb[j * 64 + i].w == sa[j * 64 + i + 3].w);
 }

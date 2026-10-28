@@ -27,6 +27,18 @@ if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
 }
 if (-not $env:VULKAN_SDK) { $env:VULKAN_SDK = [Environment]::GetEnvironmentVariable('VULKAN_SDK', 'Machine') }
 
+# Header dependency tracking (Ninja + MSVC) parses the "/showIncludes" lines that cl.exe prints. A localized
+# cl.exe prints that prefix in the console code page, and CMake records the prefix once, at first configure.
+# Building later in a console with another code page (e.g. a UTF-8 terminal) does not fail: Ninja silently
+# records NO header dependencies, so editing a header no longer rebuilds the .cpp files that include it
+# (stale objects with mismatched struct layouts -> memory corruption at run time; this happened once).
+# So pin the console to the system OEM code page for the whole configure + build, and restore it afterwards.
+$oemCodePage = [Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage
+$savedCodePage = [Console]::OutputEncoding.CodePage
+$savedEncoding = [Console]::OutputEncoding
+& chcp.com $oemCodePage | Out-Null
+try { [Console]::OutputEncoding = [Text.Encoding]::GetEncoding($oemCodePage) } catch { }
+
 Push-Location $root
 try {
     & (Join-Path $PSScriptRoot 'fix_shader_encoding.ps1')
@@ -38,6 +50,16 @@ try {
     cmake --build --preset $preset
     if ($LASTEXITCODE -ne 0) { throw "Build failed ($Config)" }
 
+    # Sanity check for the problem described above: sandbox's main.cpp includes hundreds of headers.
+    if (Get-Command ninja.exe -ErrorAction SilentlyContinue) {
+        $deps = & ninja.exe -C build -f "build-$Config.ninja" -t deps "sandbox/CMakeFiles/sandbox.dir/$Config/main.cpp.obj" 2>$null |
+            Select-Object -First 1
+        if ($deps -match '#deps 0,') {
+            throw ("Ninja recorded no header dependencies (cl /showIncludes prefix does not match the console code page). " +
+                   "Incremental builds would miss header changes. Reconfigure from a fresh build directory.")
+        }
+    }
+
     if ($Test) {
         ctest --preset $preset
         if ($LASTEXITCODE -ne 0) { throw "Unit tests failed ($Config)" }
@@ -48,4 +70,8 @@ try {
         Write-Host "All tests passed ($Config)." -ForegroundColor Green
     }
 }
-finally { Pop-Location }
+finally {
+    Pop-Location
+    & chcp.com $savedCodePage | Out-Null
+    try { [Console]::OutputEncoding = $savedEncoding } catch { }
+}
