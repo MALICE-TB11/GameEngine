@@ -27,6 +27,11 @@ bool isAttachment(Access a) {
     return a == Access::ColorWrite || a == Access::DepthWrite || a == Access::DepthRead;
 }
 
+bool requiresContent(Access a) {
+    // 默认贴图只能「被采样」：没有 STORAGE / TRANSFER_SRC 用途，尺寸、格式、层数也对不上
+    return a == Access::StorageRead || a == Access::TransferSrc;
+}
+
 rhi::ImageState stateFor(Access a, PassType type) {
     // 着色器阶段取决于 pass 类型：图形 pass 里顶点和片元着色器都可能采样（例如海面位移贴图在 VS 里采样）
     const VkPipelineStageFlags2 shaderStage = type == PassType::Compute
@@ -89,6 +94,18 @@ CompileResult compile(const std::vector<PassDecl>& passes, const std::vector<Res
         CompiledPass& cp = out.passes[p];
         for (const AccessDecl& a : pass.accesses) cp.loadOps.push_back(a.load);
         if (!pass.active) continue; // 被跳过的 pass：不改变任何资源的状态和「是否有内容」
+
+        // ---- 容错 0：必需输入没有内容 → 整个 pass 跳过 ----
+        // 以海洋的计算链 频谱 → 行 FFT → 列 FFT → 组装 为例：关掉「频谱」后，「行 FFT」读不到输入。
+        // 如果它照常被标记为「执行过」，它的输出就会被当作有效，下游会拿未初始化的显存继续算。
+        // 跳过它、并且不标记它的输出，下游按同一规则继续跳过 —— 失败一路传到第一个「可选」读取
+        // （采样），在那里换成默认贴图（例如海面拿到零位移，退化成平静水面）。
+        for (const AccessDecl& a : pass.accesses)
+            if (requiresContent(a.access) && !content[a.resource]) {
+                cp.missingInput = a.resource;
+                break;
+            }
+        if (cp.missingInput != kNoResource) continue;
         cp.executed = true;
 
         for (size_t k = 0; k < pass.accesses.size(); ++k) {
@@ -193,6 +210,12 @@ VkImageView PassContext::view(TextureHandle h) const {
     if (std::find(subs.begin(), subs.end(), h.index) != subs.end())
         return graph->fallbackView(graph->m_resources[h.index].desc.fallback, graph->m_resources[h.index].layers);
     return graph->m_resources[h.index].view;
+}
+
+VkImage PassContext::image(TextureHandle h) const {
+    ENG_ASSERT(h.valid() && h.index < graph->m_resources.size(), "无效的 TextureHandle");
+    ENG_ASSERT(hasContent(h), "默认贴图不能作为拷贝的源或目标");
+    return graph->m_resources[h.index].image;
 }
 
 bool PassContext::hasContent(TextureHandle h) const {
@@ -441,6 +464,10 @@ void RenderGraph::execute(VkCommandBuffer cmd, FrameContext& frame, rhi::GpuProf
         const CompiledPass& cp = compiled.passes[i];
         m_substituted[i] = cp.substituted;
         for (uint32_t s : cp.substituted) m_report[i].substituted.push_back(m_resources[s].desc.name);
+        if (cp.missingInput != kNoResource) {
+            m_report[i].status = PassReport::Status::MissingInput;
+            m_report[i].missingInput = m_resources[cp.missingInput].desc.name;
+        }
         if (!cp.executed) continue;
 
         // 被外部直接采样、但本帧没人写的贴图：先清成默认值（见 compile 的「容错 1」）

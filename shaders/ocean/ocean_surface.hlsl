@@ -17,21 +17,28 @@
 // 必须与 OceanRenderer.cpp 的 SurfacePush 一致（128 字节）
 struct OceanSurfacePush
 {
-    float4 sizes;      // xyz = 级联尺寸（米），w = 模式（0 Gerstner，1 FFT）
+    float4 sizes;      // xyz = 级联尺寸（米），w = 标志位（OCEAN_FLAG_*）
     float4 grid;       // xy = 网格中心（相机 XZ），z = 第一环半径，w = 最外环半径
     float4 gridDims;   // x = 环数，y = 每环分段数，z = Gerstner 波数，w = 有效波高 Hs（米）
     float4 water;      // x = 折射强度，y = 粗糙度，z = 浪尖透光强度，w = 岸边泡沫宽度（米）
     float4 absorption; // rgb = 吸收系数（1/米），w = 天空反射强度
     float4 scatter;    // rgb = 水体散射颜色，w = 泡沫细节贴图尺寸（米）
-    float4 sss;        // rgb = 浪尖透光颜色，w = 时间（秒）
-    float4 foam;       // x = 起泡阈值，y = 泡沫强度，z = 尖锐度 λ，w = 未用
+    float4 sss;        // rgb = 浪尖透光颜色，w = 相位时间（秒，已对循环周期取模）
+    float4 foam;       // x = 起泡阈值，y = 泡沫强度，z = 尖锐度 λ，w = 岸边涌浪的相位（弧度）
 };
 [[vk::push_constant]] OceanSurfacePush gOcean;
+
+static const uint OCEAN_FLAG_FFT = 1;   // 1 = FFT 模式，0 = Gerstner
+static const uint OCEAN_FLAG_SCENE = 2; // 有场景颜色/深度的拷贝（OceanPrepare 执行了）
+bool HasFlag(uint flag)
+{
+    return ((uint)gOcean.sizes.w & flag) != 0;
+}
 
 [[vk::binding(0, 1)]] Texture2DArray<float4> gDisplacement; // FFT：xyz 位移，w 泡沫
 [[vk::binding(1, 1)]] Texture2DArray<float4> gDerivatives;  // FFT：∂y/∂x, ∂y/∂z, λ∂Dx/∂x, λ∂Dz/∂z
 [[vk::binding(2, 1)]] Texture2D<float4> gSceneColorCopy;
-[[vk::binding(3, 1)]] Texture2D<float> gSceneDepthLinear;   // 视空间距离（米），天空 = 1e6
+[[vk::binding(3, 1)]] Texture2D<float> gSceneDepthLinear;   // 视空间距离（米），天空 = 1e6；没有 OCEAN_FLAG_SCENE 时是默认贴图
 [[vk::binding(4, 1)]] Texture2D<float> gShadowAtlas;
 [[vk::binding(5, 1)]] Texture2D<float4> gFoamTex;
 // Gerstner 波：A = (方向 xy, 波数 k, 角频率 ω)，B = (振幅, 初相位, Q, 0)
@@ -106,7 +113,7 @@ OceanVSOut VSMain(uint vid : SV_VertexID)
     const float growth = pow(gOcean.grid.w / gOcean.grid.z, 1.0 / float(max(rings - 2, 1u)));
     const float spacing = max(radius * (growth - 1.0), radius * 2.0 * PI / float(segments)) + 0.02;
 
-    const float3 d = gOcean.sizes.w > 0.5 ? FftDisplacement(xz, spacing) : GerstnerDisplacement(xz, spacing);
+    const float3 d = HasFlag(OCEAN_FLAG_FFT) ? FftDisplacement(xz, spacing) : GerstnerDisplacement(xz, spacing);
     OceanVSOut o;
     o.worldPos = float3(xz.x + d.x, d.y, xz.y + d.z);
     o.lagrangian = xz;
@@ -185,7 +192,7 @@ float4 PSMain(OceanVSOut i, bool frontFace : SV_IsFrontFace) : SV_Target
     const float footprint = dist * 0.001;
 
     WaveSample ws;
-    if (gOcean.sizes.w > 0.5)
+    if (HasFlag(OCEAN_FLAG_FFT))
         ws = SampleFft(i.lagrangian, footprint);
     else
         ws = SampleGerstner(i.lagrangian, footprint);
@@ -198,12 +205,15 @@ float4 PSMain(OceanVSOut i, bool frontFace : SV_IsFrontFace) : SV_Target
     const float2 uv = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     const float waterDepth = i.clip.w; // 水面的视空间距离
     const float rayScale = dist / max(waterDepth, 1e-4); // 视空间距离 → 沿视线的距离
-    float sceneDepth = gSceneDepthLinear.SampleLevel(gPointClamp, uv, 0);
+    // 没有场景拷贝（OceanPrepare 被关掉）时，默认贴图里的数不是距离（白色 = 1 米会让整片海「零厚度」）：
+    // 当作水底无穷远 —— 全部按深水着色，也没有岸边泡沫
+    const bool hasScene = HasFlag(OCEAN_FLAG_SCENE);
+    const float sceneDepth = hasScene ? gSceneDepthLinear.SampleLevel(gPointClamp, uv, 0) : 1.0e6;
 
     // 折射：沿法线扰动采样位置；扰动后采到的东西如果在水面之前（例如岸上的石头），就退回不扰动
     const float thickness0 = max(sceneDepth - waterDepth, 0.0) * rayScale;
     float2 uvR = uv + N.xz * gOcean.water.x * saturate(thickness0 * 0.5);
-    float depthR = gSceneDepthLinear.SampleLevel(gPointClamp, uvR, 0);
+    float depthR = hasScene ? gSceneDepthLinear.SampleLevel(gPointClamp, uvR, 0) : 1.0e6;
     if (depthR < waterDepth)
     {
         uvR = uv;
@@ -250,7 +260,7 @@ float4 PSMain(OceanVSOut i, bool frontFace : SV_IsFrontFace) : SV_Target
     const float waveFoam = smoothstep(1.0 - ws.foam, 1.25 - ws.foam, detail);
     const float verticalDepth = thickness * abs(V.y);
     const float shore = saturate(1.0 - verticalDepth / max(gOcean.water.w, 0.01));
-    const float surf = 0.6 + 0.4 * sin(gOcean.sss.w * 1.3 - verticalDepth * 2.5); // 一波一波往岸上推
+    const float surf = 0.6 + 0.4 * sin(gOcean.foam.w - verticalDepth * 2.5); // 一波一波往岸上推
     const float shoreCover = shore * surf;
     const float shoreFoam = sceneDepth < 1.0e5 ? smoothstep(1.0 - shoreCover, 1.25 - shoreCover, detail) : 0.0;
     const float foam = saturate(max(waveFoam, shoreFoam));

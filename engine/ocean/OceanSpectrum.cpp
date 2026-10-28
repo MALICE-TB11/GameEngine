@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <limits>
 #include <random>
 
@@ -38,17 +39,45 @@ float dispersionDerivative(float k, float depth) {
     return kGravity * (t + kh * (1.0f - t * t)) / (2.0f * std::max(omega, 1e-6f));
 }
 
-// 由 ω 反解 k（ω² = g k tanh(kh)）：深水初值 k = ω²/g，再做几次不动点迭代
-float waveNumber(float omega, float depth) {
-    float k = omega * omega / kGravity;
-    for (int i = 0; i < 8; ++i) k = omega * omega / (kGravity * std::tanh(std::max(std::min(k * depth, 20.0f), 1e-4f)));
-    return k;
+} // namespace
+
+float quantizeFrequency(float omega) {
+    const double w0 = 2.0 * kPi / kOceanRepeatPeriod;
+    return float(std::round(double(omega) / w0) * w0);
 }
 
-} // namespace
+float oceanPhaseTime(double simTime) {
+    const double t = std::fmod(simTime, kOceanRepeatPeriod);
+    return float(t < 0.0 ? t + kOceanRepeatPeriod : t);
+}
 
 float dispersion(float k, float depth) {
     return std::sqrt(kGravity * k * std::tanh(std::min(k * depth, 20.0f)));
+}
+
+float waveNumber(float omega, float depth) {
+    if (omega <= 0.0f) return 0.0f;
+    const double w2 = double(omega) * omega, g = kGravity, h = std::max(double(depth), 1e-3);
+    // f(k) = g·k·tanh(kh) - ω²，单调递增。旧版用不动点迭代 k ← ω²/(g·tanh(kh))：
+    // 浅水时 tanh(kh) ≈ kh，迭代变成 k ← ω²/(g·h·k)，在两个值之间来回跳、永远不收敛。
+    auto f = [&](double k) { return g * k * std::tanh(std::min(k * h, 40.0)) - w2; };
+    // 下界：tanh ≤ 1 → k ≥ ω²/g（深水解）；tanh(x) ≤ x → k ≥ ω/√(gh)（浅水解）。两者取大
+    double lo = std::max(w2 / g, double(omega) / std::sqrt(g * h));
+    double hi = lo * 2.0;
+    while (f(hi) < 0.0) hi *= 2.0; // 上界：加倍直到 f ≥ 0（通常一次就够）
+    double k = lo;
+    for (int i = 0; i < 64; ++i) {
+        const double fk = f(k);
+        if (std::abs(fk) <= 1e-10 * w2) break; // 相对残差足够小
+        if (fk < 0.0) lo = k;
+        else hi = k;
+        const double kh = std::min(k * h, 40.0), t = std::tanh(kh);
+        const double df = g * (t + kh * (1.0 - t * t)); // f'(k)
+        double next = k - fk / df;
+        if (!(next > lo && next < hi)) next = 0.5 * (lo + hi); // 牛顿步跳出区间（或 NaN）：改二分
+        k = next;
+    }
+    return float(k);
 }
 
 float peakFrequency(const OceanSettings& s) {
@@ -118,12 +147,17 @@ std::vector<vec4> generateCascadeSpectrum(const OceanSettings& s, uint32_t casca
             const vec2 kv = vec2(float(int(i) - int(n / 2)), float(int(m) - int(n / 2))) * dk;
             const float k = glm::length(kv);
             if (k <= 1e-6f || k < kLow || k >= kHigh) continue;
-            const float omega = dispersion(k, s.depth);
+            // Nyquist 行/列（下标 0，波数 -N/2·Δk）没有对称的 -k 格子：-k 会折回同一行/列自己身上。
+            // 高度场本身仍是实数，但乘上 kx（或 kz）的导数场不再是实数 —— 两个实数场打包进一次 FFT 时
+            // 虚部会串到另一个场里（例如 ∂Dx/∂z 的虚部混进高度）。GPU 校验在最小级联上测出约 80% 的误差。
+            // 这些波长只有两个格子，本来也表示不了方向，直接置零（随机数已经取过，不影响其他格子的相位）
+            if (i == 0 || m == 0) continue;
+            const float omega = dispersion(k, s.depth); // 频谱按真实 ω 取能量；演化时才用量化后的 ω
             const float theta = std::atan2(kv.y, kv.x) - windAngle;
             const float D = norm * std::pow(std::abs(std::cos(wrapAngle(theta) * 0.5f)), 2.0f * sp);
             // 二维波数谱 S(k⃗) = S(ω) D(θ) (dω/dk) / k   （dk⃗ = k dk dθ）
             const float Sk = frequencySpectrum(omega, s) * D * dispersionDerivative(k, s.depth) / k;
-            // E|h0|² = S Δk² / 2：ĥ(k,t) = h0(k)e^{iωt} + conj(h0(-k))e^{-iωt} 的方差正好是 S Δk²
+            // E|h0|² = S Δk² / 2：ĥ(k,t) = h0(k)e^{-iωt} + conj(h0(-k))e^{iωt} 的方差正好是 S Δk²
             const float amp = std::sqrt(std::max(Sk, 0.0f) * dk * dk * 0.5f);
             h0[size_t(m) * n + i] = xi * (amp * 0.70710678f);
         }
@@ -144,6 +178,52 @@ double cascadeEnergy(const std::vector<vec4>& h0) {
     return e;
 }
 
+std::vector<float> cascadeFrequencies(const OceanSettings& s, uint32_t cascade, uint32_t n) {
+    const float dk = 2.0f * kPi / std::max(s.cascadeSizes[int(cascade)], 0.01f);
+    std::vector<float> omega(size_t(n) * n);
+    for (uint32_t m = 0; m < n; ++m)
+        for (uint32_t i = 0; i < n; ++i) {
+            const float k = glm::length(vec2(float(int(i) - int(n / 2)), float(int(m) - int(n / 2))) * dk);
+            omega[size_t(m) * n + i] = quantizeFrequency(dispersion(k, s.depth));
+        }
+    return omega;
+}
+
+CascadeSample evaluateCascade(const std::vector<vec4>& h0, const std::vector<float>& omega, uint32_t n, float size, float lambda,
+                              vec2 position, float phaseTime) {
+    // 与 GPU 一一对应：ocean_evolve 的每一行在这里都有同样的一行，只是把逆 FFT 换成了直接求和
+    using C = std::complex<double>;
+    const double dk = 2.0 * kPi / std::max(size, 0.01f);
+    C dx, dz, dy, dxz, dyx, dyz, dxx, dzz;
+    for (uint32_t m = 0; m < n; ++m)
+        for (uint32_t i = 0; i < n; ++i) {
+            const vec4 v = h0[size_t(m) * n + i];
+            if (v == vec4(0.0f)) continue;
+            const double kx = (double(i) - double(n / 2)) * dk, kz = (double(m) - double(n / 2)) * dk;
+            const double kLen = std::sqrt(kx * kx + kz * kz);
+            const double invK = kLen > 1e-6 ? 1.0 / kLen : 0.0;
+            const C e = std::polar(1.0, -double(omega[size_t(m) * n + i]) * double(phaseTime)); // e^{-iωt}
+            const C h = C(v.x, v.y) * e + C(v.z, v.w) * std::conj(e);
+            const C ih = C(0.0, 1.0) * h;
+            const C basis = std::polar(1.0, kx * position.x + kz * position.y); // e^{ik·x}
+            dx += ih * (kx * invK) * basis;
+            dz += ih * (kz * invK) * basis;
+            dy += h * basis;
+            dyx += ih * kx * basis;
+            dyz += ih * kz * basis;
+            dxx += -h * (kx * kx * invK) * basis;
+            dzz += -h * (kz * kz * invK) * basis;
+            dxz += -h * (kx * kz * invK) * basis;
+        }
+    // h0 满足共轭对称，求和结果是实数（虚部只剩舍入误差）
+    const double l = lambda;
+    const double jacobian = (1.0 + l * dxx.real()) * (1.0 + l * dzz.real()) - (l * dxz.real()) * (l * dxz.real());
+    CascadeSample s;
+    s.displacement = vec4(float(l * dx.real()), float(dy.real()), float(l * dz.real()), float(jacobian));
+    s.derivatives = vec4(float(dyx.real()), float(dyz.real()), float(l * dxx.real()), float(l * dzz.real()));
+    return s;
+}
+
 std::vector<GerstnerWave> generateGerstnerWaves(const OceanSettings& s, uint32_t count, uint32_t seed) {
     count = std::clamp(count, 1u, kMaxGerstnerWaves);
     std::vector<GerstnerWave> waves;
@@ -160,7 +240,7 @@ std::vector<GerstnerWave> generateGerstnerWaves(const OceanSettings& s, uint32_t
         const float w0 = std::exp(lo + (hi - lo) * float(i) / float(count));
         const float w1 = std::exp(lo + (hi - lo) * float(i + 1) / float(count));
         GerstnerWave w;
-        w.omega = std::exp(lo + (hi - lo) * (float(i) + uni(rng)) / float(count));
+        w.omega = quantizeFrequency(std::exp(lo + (hi - lo) * (float(i) + uni(rng)) / float(count)));
         w.k = waveNumber(w.omega, s.depth);
         w.amplitude = std::sqrt(2.0f * frequencySpectrum(w.omega, s) * (w1 - w0));
         // 方向按 D(θ) 抽样（拒绝采样：D 的最大值在 θ = 0）

@@ -45,6 +45,9 @@ void drawRenderGraphPanel(Renderer& renderer, RenderDocCapture* renderdoc, bool*
             case rg::PassReport::Status::Ran: ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.6f, 1), "● 运行"); break;
             case rg::PassReport::Status::Disabled: ImGui::TextDisabled("○ 已关闭"); break;
             case rg::PassReport::Status::NotReady: ImGui::TextColored(ImVec4(1, 0.6f, 0.2f, 1), "⚠ 未就绪（管线错误）"); break;
+            case rg::PassReport::Status::MissingInput:
+                ImGui::TextColored(ImVec4(1, 0.6f, 0.2f, 1), "↯ 跳过：缺少 %s", p.missingInput.c_str());
+                break;
             }
             for (const std::string& s : p.substituted) {
                 ImGui::SameLine();

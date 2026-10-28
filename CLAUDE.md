@@ -43,8 +43,12 @@ math 只依赖 GLM，任何层都可用；debug 可依赖 render；editor 在最
 - 配置数值进入引擎前统一做范围检查（`App::sanitizeSettings` / `clampSetting`）；核心类（如 `FixedStepLoop`）自己也要保证不变量。
 - 图之外的代码会直接采样的 Render Graph 贴图（例如编辑器视口）设 `TextureDesc::externalRead`。
 - 地形的渲染网格、`Heightfield::heightAt`、Jolt 高度场必须是同一个三角形表面（每格沿 (x,z)→(x+1,z+1) 对角线切开）。
-- 海洋的两种实现（Gerstner / FFT）共用 `OceanSpectrum` 的同一份频谱与位移约定（y = a cos θ，水平 = −Q a d̂ sin θ），改一边要同步另一边。
-- 需要读「上一帧结果」的模拟贴图用 `TextureDesc::persistent`（A/B 交替命名）；多层数据用 `TextureDesc::layers`（shader 里是 Texture2DArray）。compute pass 读 storage 输入前先 `ctx.hasContent()`，缺失就跳过。
+- 海洋的两种实现（Gerstner / FFT）共用 `OceanSpectrum` 的同一份频谱与位移约定（y = a cos θ，水平 = −Q a d̂ sin θ，θ = k·x − ωt，FFT 演化用 e^{−iωt}），改一边要同步另一边，并跑 `sandbox --selftest ocean`（GPU 结果与 CPU 参考 `evaluateCascade` 逐点比较）。
+- 世界里随时间变化的东西（海浪、泡沫）用 `RenderView::simTime/simDt`（受暂停/时间缩放控制），不用墙钟 `time`；传给 GPU 的海洋时间先用 `oceanPhaseTime` 取模。
+- 需要读「上一帧结果」的模拟贴图用 `TextureDesc::persistent`（A/B 交替命名），而且只放历史状态，不放「本帧输出」（否则 pass 被跳过时下游读到旧数据）；多层数据用 `TextureDesc::layers`（shader 里是 Texture2DArray）。
+- storage 读取、拷贝源是**必需输入**：没有内容时 Render Graph 自动跳过该 pass、输出不标记，不需要在 execute 里检查。计算链的每一步用不同的逻辑贴图，不要让后一步覆盖前一步的贴图。
+- shader 读「采样声明」的输入时可能拿到 1×1 默认贴图：不能用 `Load`/整数下标，用 `SampleLevel` + clamp，或 `ctx.hasContent()` 判断后用 push constant 传标志。
+- 「validation 无报错」不等于输出正确：有 CPU 参考的 GPU 计算要做数值校验（回读 + 逐点比较）。
 - 程序生成的网格要检查绕序（正面朝向），否则 `SV_IsFrontFace` 会让法线翻转。
 - 参考仓库（HPWater MPL 2.0、HPVolumeCloud MIT）只读思路，不复制代码。
 
@@ -82,7 +86,7 @@ validation layer（Debug 默认开）、所有 Vulkan 对象 debug name、Render
 
 ## 里程碑流程
 - 每个里程碑：Debug + Release 构建通过、单元测试 + 冒烟测试通过、validation 无报错、实际确认画面后**单独 git 提交**。
-- 验收还包括 [docs/稳定性与故障演练.md](docs/稳定性与故障演练.md) 里的故障演练（关 pass 后缩放、损坏场景、错误 `.meta`……），并记录冒烟测试输出的帧时间 P95/P99 与最长帧。
+- 验收还包括 [docs/稳定性与故障演练.md](docs/稳定性与故障演练.md) 里的故障演练（关 pass 后缩放、损坏场景、错误 `.meta`、`--selftest ocean`……），并记录冒烟测试输出的帧时间 P95/P99 与最长帧。
 - 每个里程碑在 `docs/` 写一篇中文笔记：解决的问题、mermaid 数据流图、关键公式（`$...$`）、扩展点汇总、动手练习。
 - README 维护模块地图、阅读顺序、里程碑进度。
 - 分三段推进，每段结束停下等用户确认：M0–M3 → M4–M5 → M6–M7。

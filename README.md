@@ -45,6 +45,7 @@
 | `--terrain-lod` | 地形按四叉树级别着色 |
 | `--set section.key=value` | 本次运行临时覆盖一个配置项，可多次使用，例如 `--set ocean.windSpeed=15 --set ocean.mode=0` |
 | `--disable-pass A,B` | 启动时关闭这些 pass（故障演练，例如 `--disable-pass Tonemap,FXAA`），见 [docs/稳定性与故障演练.md](docs/稳定性与故障演练.md) |
+| `--selftest ocean` | 海洋 GPU 自测：回读 GPU 结果与 CPU 参考逐点比较、逐个关 pass 检查退化、暂停与拖动参数，结束后退出（返回码 0 = 全部通过） |
 
 常用操作：视口内右键拖动 + WASD/QE 飞行，左键选择，F 聚焦，F1 编辑器/游戏模式，F5/F6 暂停/单步模拟，F9 截图，F12 RenderDoc 捕获，Ctrl+S 保存配置，Ctrl+R 重编 shader。「帮助 → 快捷键与操作」里有完整列表。
 游戏模式（F1）：WASD 移动、Shift 冲刺、空格跳、鼠标转视角、滚轮调远近、R 回到出生点。
@@ -124,6 +125,7 @@ physics 只依赖 core（Jolt 是私有依赖）；world 用 physics 做场景�
 - [x] **M4 地形与物理**：级联阴影（4 级联图集、纹素对齐、法线偏移、PCF）、FXAA、RenderFeature 接口；程序化岛屿高度场、四叉树 LOD + 裙边、分层材质（高度混合、三平面岩石、远近双尺度）；Jolt 物理封装、场景实体自动生成碰撞体（静态网格/动态凸包）、角色控制器 + 第三人称相机
 - [x] **稳定性修整**：场景文件损坏不再被覆盖、材质检视器不再持有悬空指针、后台任务异常不再终止进程、上传与读后读同步、视口默认贴图、地形三表面统一、配置范围检查、故障演练清单与帧时间 P95/P99
 - [x] **M5 海面**：JONSWAP/TMA 频谱、三级联 256² GPU 逆 FFT（优化）与 Gerstner（参考）可切换、雅可比泡沫累积 + 岸边泡沫、菲涅尔反射 + RGB 吸收折射 + 太阳高光 + 浪尖透光；Render Graph 数组/持久贴图
+- [x] M5 第二轮审查：Render Graph「必需输入」规则（失败沿计算链传播）、FFT 传播方向与 Gerstner 统一、浅水波数求解、Nyquist 串扰、海浪走模拟时间、频谱后台生成；GPU 结果校验 `--selftest ocean`
 - [ ] M5 后续：局部交互（波动方程 → 浅水方程）
 - [ ] M6 Medium + 水下 + 材质读取介质
 - [ ] M7 风格化角色材质

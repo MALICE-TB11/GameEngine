@@ -403,11 +403,13 @@ void Renderer::addCapturePass(rg::TextureHandle backbuffer, uint32_t imageIndex)
         rhi::destroyBuffer(*m_device, m_captureBuffer);
         m_captureBuffer = rhi::createBuffer(*m_device, size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, rhi::MemoryUsage::Readback, "CaptureReadback");
     }
-    m_captureRecorded = true;
     const VkImage image = m_swapchain.image(imageIndex);
     m_graph.addPass("Capture", rg::PassType::Transfer)
         .transferSrc(backbuffer) // 图会自动把交换链图像转成 TRANSFER_SRC 布局，之后再转成 PRESENT
         .execute([this, image, ext](rg::PassContext& ctx) {
+            // 在这里才标记：所有写交换链的 pass 都关掉时图会跳过本 pass（拷贝源是必需输入），
+            // 这时不能把缓冲里的旧数据当截图保存，截图请求留到下一帧
+            m_captureRecorded = true;
             VkBufferImageCopy region{};
             region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
             region.imageExtent = {ext.width, ext.height, 1};

@@ -13,6 +13,7 @@
 //   sandbox.exe --terrain-lod                   地形按四叉树级别着色（截图/调参用）
 //   sandbox.exe --disable-pass FXAA,Tonemap     启动时关闭这些 pass（故障演练：下游应自动用默认资源）
 //   sandbox.exe --set ocean.windSpeed=15        临时覆盖一个配置项（可多次使用；不会写回 config）
+//   sandbox.exe --selftest ocean                海洋 GPU 自测：回读 GPU 结果与 CPU 参考逐点比较、逐个关 pass 检查退化
 
 #include "App.h"
 
@@ -69,6 +70,8 @@ int main(int argc, char** argv) {
                 if (comma > start) opts.disabledPasses.push_back(list.substr(start, comma - start));
                 start = comma + 1;
             }
+        } else if (arg == "--selftest" && i + 1 < argc) {
+            opts.selfTest = argv[++i];
         } else if (arg == "--renderdoc") {
             opts.renderdoc = true;
         } else if (arg == "--no-renderdoc") {

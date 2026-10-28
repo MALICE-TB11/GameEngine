@@ -4,6 +4,8 @@
 //   2. 管理瞬态贴图（按需创建、跨帧复用、尺寸变化时重建）
 //   3. pass 开关：被关掉或「没准备好」（例如 shader 编译失败）的 pass 不执行，
 //      它的输出由默认贴图（黑/白/平坦法线）代替，下游 pass 照常运行
+//   4. 必需输入：storage 读取、拷贝源没有默认贴图可替代 —— 读不到就整个 pass 跳过，
+//      它的输出同样算「没有内容」，失败沿着计算链一路向下传播（见 compile 的「容错 0」）
 //
 // 为什么要它：手写 barrier 是 Vulkan 最容易出错的部分——少一个就是偶发的画面闪烁，
 // 多一个就是性能损失，而且 pass 一多、能开关之后，正确的 barrier 组合会随开关状态变化。
@@ -50,6 +52,8 @@ enum class Fallback : uint8_t { Black, White, FlatNormal, DepthFar, None }; // D
 
 bool isWrite(Access a);
 bool isAttachment(Access a);
+// 这种读取必须有真实内容（不能换成默认贴图）：storage 读取、拷贝源
+bool requiresContent(Access a);
 rhi::ImageState stateFor(Access a, PassType type);
 
 // ======================= 纯逻辑部分（单元测试覆盖） =======================
@@ -84,8 +88,11 @@ struct Barrier {
     rhi::ImageState from, to;
 };
 
+inline constexpr uint32_t kNoResource = UINT32_MAX;
+
 struct CompiledPass {
     bool executed = false;
+    uint32_t missingInput = kNoResource;  // 因为这个必需输入没有内容而跳过（kNoResource = 没有缺失）
     std::vector<Barrier> barriers;       // 执行前要插入的 barrier
     std::vector<uint32_t> substituted;   // 这些资源没有内容，读时换成默认贴图
     std::vector<LoadOp> loadOps;         // 与 accesses 一一对应的「实际」load op
@@ -139,8 +146,12 @@ struct PassContext {
     FrameContext* frame = nullptr;
     // 资源的 image view；没有内容的资源会返回默认贴图
     VkImageView view(TextureHandle h) const;
+    // 资源的 VkImage（拷贝命令用）。只对本 pass 真正可用的资源有效：拷贝源是必需输入，缺失时 pass 不会执行
+    VkImage image(TextureHandle h) const;
     // 资源本帧是否有真实内容（false = 被换成了默认贴图）。
-    // storage 读取不能绑默认贴图（它没有 STORAGE 用途）：compute pass 发现输入缺失时应直接跳过
+    // 采样的输入可能是默认贴图（1×1）：shader 里不能用整数坐标 Load/下标读它（越界是未定义行为），
+    // 要么用 Sample + clamp 采样器，要么在这里判断后通过 push constant 告诉 shader「没有这项输入」。
+    // （storage 读取、拷贝源缺失时图会直接跳过整个 pass，到不了 execute。）
     bool hasContent(TextureHandle h) const;
     const RenderGraph* graph = nullptr;
     uint32_t passIndex = 0;
@@ -168,11 +179,12 @@ private:
 };
 
 struct PassReport {
-    enum class Status { Ran, Disabled, NotReady };
+    enum class Status { Ran, Disabled, NotReady, MissingInput };
     std::string name;
     Status status = Status::Ran;
     float gpuMs = 0.0f;
     std::vector<std::string> substituted;
+    std::string missingInput; // Status::MissingInput 时：缺的是哪个资源
 };
 
 class RenderGraph {

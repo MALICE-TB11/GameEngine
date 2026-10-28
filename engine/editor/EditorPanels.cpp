@@ -638,10 +638,12 @@ void Editor::drawRenderSettingsPanel() {
         ImGui::PushID(p.name.c_str());
         ImGui::Checkbox("##on", &graph.passEnabled(p.name));
         ImGui::SameLine();
-        const ImVec4 col = p.status == rg::PassReport::Status::Ran        ? theme::kOk
-                         : p.status == rg::PassReport::Status::NotReady ? theme::kWarn
-                                                                         : theme::kTextDim;
+        const ImVec4 col = p.status == rg::PassReport::Status::Ran      ? theme::kOk
+                         : p.status == rg::PassReport::Status::Disabled ? theme::kTextDim
+                                                                        : theme::kWarn;
         ImGui::TextColored(col, "%s", p.name.c_str());
+        if (p.status == rg::PassReport::Status::MissingInput && ImGui::IsItemHovered())
+            ImGui::SetTooltip("上游没有产生 %s，本 pass 跳过", p.missingInput.c_str());
         if (p.status == rg::PassReport::Status::Ran) {
             ImGui::SameLine(ImGui::GetContentRegionMax().x - 70.0f);
             ImGui::TextDisabled("%.3f ms", p.gpuMs);

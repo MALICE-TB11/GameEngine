@@ -39,7 +39,8 @@ void Editor::drawOceanPanel() {
 
     const ocean::OceanStats& st = o.stats();
     ImGui::TextDisabled("有效波高 %.2f m · 峰值波长 %.0f m · 周期 %.1f s", st.significantWaveHeight, st.peakWavelength, st.peakPeriod);
-    ImGui::TextDisabled("网格 %u 顶点 · 上次生成频谱 %.1f ms", st.vertices, st.spectrumMs);
+    ImGui::TextDisabled("网格 %u 顶点 · 频谱：后台生成 %.1f ms，上传 %.2f ms（共 %u 次）", st.vertices, st.spectrumMs, st.uploadMs,
+                        st.rebuilds);
 
     theme::sectionHeader("风浪");
     c |= ImGui::SliderFloat("风速", &s.windSpeed, 0.5f, 30.0f, "%.1f m/s");

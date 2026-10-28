@@ -200,3 +200,69 @@ TEST_CASE("跨帧：瞬态贴图的初始阶段来自上一帧，第一次写入
     CHECK(r.passes[0].barriers[0].from.layout == VK_IMAGE_LAYOUT_UNDEFINED); // 内容丢弃
     CHECK(r.endStates[0].layout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 }
+
+TEST_CASE("必需输入缺失：计算链逐级跳过，失败传到第一个采样读者才换成默认贴图") {
+    // 海洋的计算链：Spectrum 写 Freq → Rows 读 Freq 写 Temp → Columns 读 Temp 写 Spatial
+    //               → Assemble 读 Spatial 写 Disp → 海面采样 Disp
+    const std::vector<ResourceDecl> res = {transient("Freq"), transient("Temp"), transient("Spatial"), transient("Disp"),
+                                           transient("Color")};
+    auto chain = [](bool spectrumOn, bool columnsOn) {
+        return std::vector<PassDecl>{
+            pass("Spectrum", {{0, Access::StorageWrite}}, spectrumOn, PassType::Compute),
+            pass("Rows", {{0, Access::StorageRead}, {1, Access::StorageWrite}}, true, PassType::Compute),
+            pass("Columns", {{1, Access::StorageRead}, {2, Access::StorageWrite}}, columnsOn, PassType::Compute),
+            pass("Assemble", {{2, Access::StorageRead}, {3, Access::StorageWrite}}, true, PassType::Compute),
+            pass("Ocean", {{3, Access::Sampled}, {4, Access::ColorWrite, LoadOp::Clear}}),
+        };
+    };
+
+    SUBCASE("全部开启：都执行，没有替换") {
+        const CompileResult r = compile(chain(true, true), res);
+        for (const CompiledPass& p : r.passes) CHECK(p.executed);
+        CHECK(r.passes[4].substituted.empty());
+    }
+    SUBCASE("关掉源头：下游三个 compute pass 都因缺输入跳过，海面读默认贴图") {
+        const CompileResult r = compile(chain(false, true), res);
+        CHECK_FALSE(r.passes[0].executed);
+        CHECK(r.passes[0].missingInput == kNoResource); // 它是被关掉的，不是缺输入
+        CHECK_FALSE(r.passes[1].executed);
+        CHECK(r.passes[1].missingInput == 0);
+        CHECK_FALSE(r.passes[2].executed);
+        CHECK(r.passes[2].missingInput == 1);
+        CHECK_FALSE(r.passes[3].executed);
+        CHECK(r.passes[3].missingInput == 2);
+        CHECK(r.passes[4].executed);
+        REQUIRE(r.passes[4].substituted.size() == 1);
+        CHECK(r.passes[4].substituted[0] == 3);
+        // 跳过的 pass 不插 barrier，也不把输出标成有内容
+        for (int i = 1; i < 4; ++i) CHECK(r.passes[i].barriers.empty());
+        CHECK_FALSE(r.endContent[1]);
+        CHECK_FALSE(r.endContent[3]);
+    }
+    SUBCASE("只关中间一环：前面照常执行，后面跳过（不会把频域数据当空间域用）") {
+        const CompileResult r = compile(chain(true, false), res);
+        CHECK(r.passes[0].executed);
+        CHECK(r.passes[1].executed);
+        CHECK_FALSE(r.passes[2].executed);
+        CHECK_FALSE(r.passes[3].executed);
+        CHECK(r.passes[3].missingInput == 2);
+        REQUIRE(r.passes[4].substituted.size() == 1);
+    }
+}
+
+TEST_CASE("必需输入：拷贝源没有内容时拷贝 pass 跳过；持久贴图上一帧的内容算有效输入") {
+    ResourceDecl history = transient("History");
+    const std::vector<PassDecl> passes = {
+        pass("Readback", {{0, Access::TransferSrc}}, true, PassType::Transfer),
+        pass("Simulate", {{0, Access::StorageRead}, {1, Access::StorageWrite}}, true, PassType::Compute),
+    };
+    const CompileResult first = compile(passes, {history, transient("Next")});
+    CHECK_FALSE(first.passes[0].executed);
+    CHECK_FALSE(first.passes[1].executed);
+
+    history.hasContent = true; // 持久贴图：上一帧写过
+    const CompileResult later = compile(passes, {history, transient("Next")});
+    CHECK(later.passes[0].executed);
+    CHECK(later.passes[1].executed);
+    CHECK(later.passes[1].missingInput == kNoResource);
+}

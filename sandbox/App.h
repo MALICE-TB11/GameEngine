@@ -10,6 +10,7 @@
 #include "debug/ImGuiLayer.h"
 #include "debug/RenderDocCapture.h"
 #include "editor/Editor.h"
+#include "OceanSelfTest.h"
 #include "Player.h"
 #include "math/Transform.h"
 #include "ocean/OceanRenderer.h"
@@ -49,6 +50,7 @@ struct LaunchOptions {
         std::string section, key, value;
     };
     std::vector<Override> overrides; // --set section.key=value：本次运行临时覆盖配置
+    std::string selfTest;            // --selftest ocean：运行自测脚本，结束后退出
 };
 
 struct DebugSettings {
@@ -132,6 +134,7 @@ private:
 
     // ---- M5：海洋 ----
     ocean::OceanRenderer m_ocean;
+    std::optional<OceanSelfTest> m_selfTest; // 只在 --selftest ocean 时存在
     asset::TextureHandle m_foamTexture;
 };
 

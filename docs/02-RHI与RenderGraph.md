@@ -53,6 +53,8 @@ $$\text{layout}_S \ne \text{layout}_T \;\lor\; \text{write}_T \;\lor\; \text{wri
 | 情况 | 结果 |
 |---|---|
 | pass 在面板中被关闭 | 不执行；读它输出的下游改读默认贴图（`TextureDesc::fallback`）；下游若想 LOAD 则自动改为 CLEAR |
+| pass 的**必需输入**没有内容（storage 读取、拷贝源） | 默认贴图没有 STORAGE / TRANSFER_SRC 用途、尺寸也对不上，没法替代 → 整个 pass 跳过，输出也不标记为「有内容」，下游按同一规则继续，直到第一个采样读者换成默认贴图。面板显示「↯ 跳过：缺少 X」（M5 后加入，见 [稳定性与故障演练](稳定性与故障演练.md)） |
+| 采样读取可能拿到默认贴图（1×1） | shader 里不能对它用 `Load` / 整数下标（越界是未定义行为）；用 `SampleLevel` + clamp 采样器，或在 pass 里 `ctx.hasContent()` 判断后传标志 |
 | pass 的管线编译失败（`require()` 返回 false） | 同上，面板显示「未就绪（管线错误）」 |
 | 所有写交换链的 pass 都关了 | 帧末清成黑色再 PRESENT，不显示垃圾显存 |
 | 只读深度的上游被关 | 改为「清空并写入」，避免读未初始化的深度 |

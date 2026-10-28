@@ -17,8 +17,12 @@ struct RenderView {
     vec3 position{0.0f};
     float fovY = 1.0f;     // 弧度；级联阴影需要知道视锥形状
     float nearPlane = 0.05f;
-    double time = 0.0;
+    double time = 0.0;     // 墙钟时间：界面动画、热重载轮询这类「暂停时也要走」的东西用
     float dt = 0.0f;
+    // 模拟时间：受暂停 / 单步 / 时间缩放控制，并插值到渲染时刻（与实体的渲染插值同一时刻）。
+    // 海浪、泡沫这类「世界的一部分」用它 —— 暂停时海也停，物理（浮力）看到的水面与画面同一时间轴
+    double simTime = 0.0;
+    float simDt = 0.0f;    // 本帧模拟时间前进了多少（暂停时为 0）
 };
 
 struct DrawItem {

@@ -126,17 +126,28 @@ int App::run(const LaunchOptions& options) {
         const bool lastFrame = counting && m_options.frames > 0 && frame + 1 >= m_options.frames;
         if (lastFrame && !m_options.capturePath.empty()) m_renderer.requestCapture(m_options.capturePath);
 
-        // 渲染插值 + LOD 选择 + 选中高亮
+        // 模拟时间插值到渲染时刻：与实体的渲染插值相同（上一步 + alpha × 步长），暂停时不动
+        const double renderSimTime = m_simTime - (1.0 - double(m_loop.alpha())) * double(m_loop.fixedDt());
+        m_view.simDt = float(std::max(renderSimTime - m_view.simTime, 0.0));
+        m_view.simTime = renderSimTime;
+
+        // 渲染插值 + LOD 选择 + 选中高亮。LOD 按「实际渲染用的相机」选：游戏模式下是跟随玩家的相机，
+        // 不是停在原地的编辑器相机（否则玩家走远后，近处模型会被过度简化）
         LodContext lod;
-        lod.cameraPos = m_camera.position();
+        lod.cameraPos = m_view.position;
         lod.pixelsPerRadian = float(se.height) / (2.0f * std::tan(glm::radians(m_cameraSettings.fovDeg) * 0.5f));
         lod.thresholdPx = m_rendererSettings.lodThresholdPx;
         m_scene.buildDrawList(m_drawList, float(m_loop.alpha()), lod, m_editor.selection(), m_editor.highlightStrength(now));
         addPlayerDraw(float(m_loop.alpha()));
         m_ocean.setFoamTexture(m_assets.texture(m_foamTexture)); // 指针只用于本帧（热重载会换掉它）
-        if (m_renderer.drawFrame(m_view, m_drawList) && counting) {
+        const bool drawn = m_renderer.drawFrame(m_view, m_drawList);
+        if (drawn && counting) {
             ++frame;
             if (m_options.frames > 0) frameMs.push_back(float(dt * 1000.0));
+        }
+        if (drawn && m_selfTest) {
+            if (m_selfTest->afterFrame(m_ocean, m_renderer.graph(), m_oceanSettings, m_sim)) break;
+            m_ocean.setSettings(m_oceanSettings); // 自测脚本可能改了参数（模式、风速）
         }
 
         if (m_options.frames > 0 && frame >= m_options.frames) break;
@@ -227,6 +238,13 @@ bool App::init(const LaunchOptions& options) {
     for (const std::string& name : options.disabledPasses) {
         m_renderer.graph().passEnabled(name) = false;
         LOG_INFO("已按命令行关闭 pass: {}", name);
+    }
+    if (options.selfTest == "ocean") {
+        m_selfTest.emplace();
+        m_selfTest->begin(m_ocean, m_oceanSettings);
+        m_ocean.setSettings(m_oceanSettings);
+    } else if (!options.selfTest.empty()) {
+        LOG_ERROR("未知的自测项目: {}（可用：ocean）", options.selfTest);
     }
     m_renderer.addFeature(&m_terrain);
     m_player.init(m_physics, m_playerSettings);

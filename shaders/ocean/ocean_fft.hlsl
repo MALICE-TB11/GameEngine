@@ -27,7 +27,7 @@ void CSMain(uint3 group : SV_GroupID, uint t : SV_GroupIndex)
 {
     const uint row = group.y;
     const uint cascade = group.z;
-    const bool vertical = gSim.foam.w > 0.5;
+    const bool vertical = gSim.fft.x > 0.5;
     const int3 coord = vertical ? int3(row, t, cascade) : int3(t, row, cascade);
 
     const uint r = reversebits(t) >> (32 - OCEAN_LOG_N);
