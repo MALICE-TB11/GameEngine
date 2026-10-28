@@ -39,9 +39,11 @@
 | `--validation` / `--no-validation` | 强制开/关 validation layer（Debug 默认开） |
 | `--renderdoc` / `--no-renderdoc` | 强制加载/不加载 RenderDoc（F12 捕获） |
 | `--model path.glb` | 加载指定 glTF 模型代替演示遗迹 |
-| `--no-ui` | 隐藏调试界面（运行中按 F1 切换） |
+| `--no-ui` | 以游戏模式启动：场景全屏、隐藏编辑器（运行中按 F1 切换） |
+| `--select 名字` | 启动时选中某个实体，例如 `--select ruins/Pillar_R` |
 
-操作：右键拖动转视角，WASD 移动，Q/E 升降，Shift 加速，滚轮调速，F1 显示/隐藏界面，F12 RenderDoc 捕获。
+界面是仿 UE / Unity 的停靠式编辑器（场景大纲、视口、检视器、环境光照、日志、性能……），说明见 [docs/编辑器界面.md](docs/编辑器界面.md)。
+常用操作：视口内右键拖动 + WASD/QE 飞行，左键选择，F 聚焦，F1 编辑器/游戏模式，F5/F6 暂停/单步模拟，F9 截图，F12 RenderDoc 捕获，Ctrl+S 保存配置，Ctrl+R 重编 shader。「帮助 → 快捷键与操作」里有完整列表。
 
 也可以直接用 VS 2026「打开本地文件夹」，它会读取 `CMakePresets.json`（需要先在 Developer PowerShell 中运行一次 `build.ps1`，或让 VS 自行配置）。
 
@@ -50,7 +52,7 @@
 ## 模块地图
 
 ```
-math ← core ← platform ← rhi ← render ← world / debug / 特性模块(terrain / ocean / medium / physics) ← sandbox
+math ← core ← platform ← rhi ← render ← world / debug / 特性模块(terrain / ocean / medium / physics) ← editor ← sandbox
 ```
 
 | 目录 | 职责 | 里程碑 |
@@ -61,7 +63,8 @@ math ← core ← platform ← rhi ← render ← world / debug / 特性模块(t
 | `engine/rhi` | Vulkan 薄封装：设备、交换链、资源、上传、描述符、管线、GPU 计时 | M1–M2 |
 | `engine/render` | Render Graph、Renderer、管线缓存与热重载、相机、网格、材质、glTF、各 pass | M2–M3 |
 | `engine/world` | 场景/实体（固定步长 + 插值） | M3 |
-| `engine/debug` | ImGui 面板、RenderDoc | M1–M2 |
+| `engine/debug` | ImGui 初始化与字体、日志/性能/Render Graph/Shader 面板、RenderDoc | M1–M2 |
+| `engine/editor` | 编辑器外壳：菜单、工具栏、状态栏、停靠布局、视口点选、大纲、检视器、环境光照 | M3 后 |
 | `engine/terrain` | 高度图地形、地形材质 | M4 |
 | `engine/physics` | PhysicsWorld（封装 Jolt） | M4 |
 | `engine/ocean` | 海面模拟与渲染 | M5 |
@@ -70,7 +73,7 @@ math ← core ← platform ← rhi ← render ← world / debug / 特性模块(t
 | `shaders/passes` | 全屏 pass（天空、色调映射） | M2–M3 |
 | `shaders/materials` | 材质（PBR、错误材质） | M2–M3 |
 | `config/` | 可热加载的参数（JSON） | M1 起 |
-| `tools/` | 资源生成脚本 | M3 |
+| `tools/` | 资源生成脚本、界面字形扫描（`update_ui_glyphs.py`） | M3 起 |
 | `docs/` | 每个里程碑一篇中文学习笔记 | 全程 |
 
 ## 从哪里开始读代码
@@ -89,6 +92,7 @@ math ← core ← platform ← rhi ← render ← world / debug / 特性模块(t
 12. [shaders/materials/pbr_standard.hlsl](shaders/materials/pbr_standard.hlsl) → [shaders/common/shading.hlsli](shaders/common/shading.hlsli) —— 材质如何填 SurfaceData、光照在哪里计算
 13. [engine/render/GltfLoader.cpp](engine/render/GltfLoader.cpp) —— 模型加载
 14. [docs/03-网格与PBR.md](docs/03-网格与PBR.md)
+15. [docs/编辑器界面.md](docs/编辑器界面.md) → [engine/editor/Editor.cpp](engine/editor/Editor.cpp) —— 编辑器外壳与视口
 
 ## 里程碑进度
 
@@ -96,10 +100,16 @@ math ← core ← platform ← rhi ← render ← world / debug / 特性模块(t
 - [x] **M1 窗口与清屏**：GLFW + Vulkan 1.3 + 交换链、validation、缩放/最小化、ImGui 统计、固定步长主循环、config 热加载
 - [x] **M2 RHI + Render Graph**：自动 barrier、瞬态贴图、pass 开关与默认资源、shader 热重载与错误材质、RenderDoc、GPU 计时、自由相机
 - [x] **M3 网格与 PBR**：glTF、shader 公共库与 `SurfaceData → ShadingModel`、Cook-Torrance、解析天空、ACES / AgX、调试视图、材质编辑
+- [x] **编辑器界面**：仿 UE/Unity 停靠布局、离屏视口、点选与聚焦、大纲、检视器、环境光照（太阳方位盘、时间预设）、日志/性能/Render Graph/Shader 面板、状态栏
+- [ ] M3.5 资源层（见 [架构与路线图](docs/架构与路线图.md)）
 - [ ] M4 地形与物理
 - [ ] M5 海面
 - [ ] M6 Medium + 水下 + 材质读取介质
 - [ ] M7 风格化角色材质
+
+## 架构与路线图
+
+五层架构、资源层设计、**海洋系统**（FFT 频谱 + 波动方程/浅水方程交互 + 泡沫累积）、**大气与天气系统**（物理大气、体积云、雨、闪电、天气渐变）以及后续里程碑顺序，见 [docs/架构与路线图.md](docs/架构与路线图.md)。
 
 ## 后续里程碑：主要文件与风险
 
