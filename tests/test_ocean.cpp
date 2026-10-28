@@ -1,4 +1,5 @@
 // 海浪频谱与 Gerstner 参考实现（纯 CPU）：检查物理关系和归一化，而不只是「不崩」。
+#include "ocean/OceanRipples.h"
 #include "ocean/OceanSpectrum.h"
 
 #include <doctest/doctest.h>
@@ -197,5 +198,168 @@ TEST_CASE("海洋：Nyquist 行/列为零 —— 否则导数场不是实数，�
             CHECK(h0[j] == vec4(0.0f));     // 第 0 行（kz = -N/2·Δk）
             CHECK(h0[j * n] == vec4(0.0f)); // 第 0 列（kx = -N/2·Δk）
         }
+    }
+}
+
+// ---------------------------------------------------------------- 局部交互（波纹）
+
+namespace {
+
+// 测试用的小网格：n×n，格子 0.25 m，水深处处为 depth
+struct RippleFixture {
+    RippleParams p;
+    std::vector<float> depth;
+    RippleGrid grid;
+    RippleStepInput step;
+    explicit RippleFixture(uint32_t n = 96, float h = 10.0f, float speed = 3.0f) {
+        p.n = n;
+        p.cellSize = 0.25f;
+        p.maxSpeed = speed;
+        p.damping = 0.0f;
+        p.spongeStrength = 0.0f;
+        p.spongeCells = 8.0f;
+        depth.assign(size_t(n) * n, h);
+        grid.assign(size_t(n) * n, vec4(0.0f));
+        step.dt = 1.0f / 60.0f;
+    }
+    // 静止的高斯隆起（u = u⁻：初速度为零）
+    void bump(float ci, float cj, float amplitude, float radiusCells) {
+        for (uint32_t j = 0; j < p.n; ++j)
+            for (uint32_t i = 0; i < p.n; ++i) {
+                const float d2 = (float(i) - ci) * (float(i) - ci) + (float(j) - cj) * (float(j) - cj);
+                const float u = amplitude * std::exp(-d2 / (radiusCells * radiusCells));
+                grid[j * p.n + i] = vec4(u, u, 0.0f, depth[j * p.n + i]);
+            }
+    }
+    void run(int steps) {
+        RippleGrid next;
+        for (int k = 0; k < steps; ++k) {
+            rippleStep(grid, true, depth, p, step, next);
+            grid.swap(next);
+        }
+    }
+    float at(uint32_t i, uint32_t j) const { return grid[j * p.n + i].x; }
+};
+
+} // namespace
+
+TEST_CASE("波纹：稳定性条件会截断过大的波速") {
+    OceanSettings s;
+    s.rippleSize = 64.0f;
+    s.rippleResolution = 256;
+    s.rippleMaxSpeed = 100.0f;
+    const RippleParams p = makeRippleParams(s, 1.0f / 60.0f);
+    CHECK(p.cellSize == doctest::Approx(0.25f));
+    CHECK(p.maxSpeed == doctest::Approx(rippleSpeedLimit(0.25f, 1.0f / 60.0f)));
+    CHECK(p.maxSpeed * (1.0f / 60.0f) / p.cellSize <= kRippleCfl + 1e-5f);
+}
+
+TEST_CASE("波纹：没有阻尼时能量守恒，波以 c 的速度向外传播") {
+    RippleFixture f;
+    const float c = f.p.maxSpeed; // 水深 10 m：√(g·h) ≈ 9.9 > 3，按上限
+    f.bump(48.0f, 48.0f, 0.1f, 3.0f);
+    f.run(1);
+    const double e0 = rippleEnergy(f.grid, f.depth, f.p, f.step.dt);
+    f.run(59); // 共 1 秒：波前走了 3 m = 12 格，还没碰到边界
+    const double e1 = rippleEnergy(f.grid, f.depth, f.p, f.step.dt);
+    CHECK(e1 == doctest::Approx(e0).epsilon(0.05));
+    // 沿 +X 找最高的波峰：应在 c·t = 3 m 附近（脉冲本身有宽度，允许 ±0.5 m）
+    uint32_t peak = 48;
+    for (uint32_t i = 49; i < 96; ++i)
+        if (f.at(i, 48) > f.at(peak, 48)) peak = i;
+    CHECK(float(peak - 48) * f.p.cellSize == doctest::Approx(c * 1.0f).epsilon(0.17));
+}
+
+TEST_CASE("波纹：浅水里波速按 √(g·h) 变慢") {
+    RippleFixture f(96, 0.4f, 4.0f); // √(9.81 × 0.4) ≈ 1.98 m/s < 上限 4
+    f.bump(48.0f, 48.0f, 0.05f, 3.0f);
+    f.run(60);
+    uint32_t peak = 48;
+    for (uint32_t i = 49; i < 96; ++i)
+        if (f.at(i, 48) > f.at(peak, 48)) peak = i;
+    CHECK(float(peak - 48) * f.p.cellSize == doctest::Approx(std::sqrt(kGravity * 0.4f)).epsilon(0.25));
+}
+
+TEST_CASE("波纹：撞到岸会反射 —— 岸上没有水，能量留在水里") {
+    RippleFixture f;
+    for (uint32_t j = 0; j < f.p.n; ++j)
+        for (uint32_t i = 60; i < f.p.n; ++i) f.depth[j * f.p.n + i] = -1.0f; // x ≥ 60 格是陆地
+    f.bump(48.0f, 48.0f, 0.1f, 3.0f);
+    f.run(1);
+    const double e0 = rippleEnergy(f.grid, f.depth, f.p, f.step.dt);
+    f.run(80); // 波前 4 m = 16 格：已经撞到 12 格外的岸并反射
+    for (uint32_t j = 0; j < f.p.n; ++j)
+        for (uint32_t i = 60; i < f.p.n; ++i) REQUIRE(f.grid[j * f.p.n + i].x == 0.0f);
+    CHECK(rippleEnergy(f.grid, f.depth, f.p, f.step.dt) == doctest::Approx(e0).epsilon(0.06));
+}
+
+TEST_CASE("波纹：边缘吸收层把波吃掉，不会反弹回来") {
+    RippleFixture f(64);
+    f.p.spongeCells = 16.0f;
+    f.p.spongeStrength = 12.0f;
+    f.bump(32.0f, 32.0f, 0.1f, 3.0f);
+    f.run(1);
+    const double e0 = rippleEnergy(f.grid, f.depth, f.p, f.step.dt);
+    f.run(240); // 4 秒：波早就走到边缘了
+    CHECK(rippleEnergy(f.grid, f.depth, f.p, f.step.dt) < e0 * 0.05);
+}
+
+TEST_CASE("波纹：区域跟着玩家移动时，读上一步状态按格子偏移（图案在世界里不动）") {
+    RippleFixture a(64), b(64);
+    a.bump(30.0f, 32.0f, 0.1f, 3.0f);
+    b.bump(30.0f, 32.0f, 0.1f, 3.0f);
+    a.run(10);
+    b.run(10);
+    // b 的区域原点向 +X 移动 3 格：b 的格子 i 对应 a 的格子 i + 3
+    RippleGrid shifted, plain;
+    b.step.shift = ivec2(3, 0);
+    rippleStep(b.grid, true, b.depth, b.p, b.step, shifted);
+    rippleStep(a.grid, true, a.depth, a.p, a.step, plain);
+    for (uint32_t j = 4; j < 60; ++j)
+        for (uint32_t i = 4; i < 56; ++i) REQUIRE(shifted[j * 64 + i].x == plain[j * 64 + i + 3].x);
+}
+
+TEST_CASE("波纹：扰动源把水面往下压，泡沫只出现在陡的地方") {
+    RippleFixture f(64);
+    f.step.sourceCount = 1;
+    f.step.origin = vec2(0.0f);
+    f.step.sources[0] = {vec2(8.0f, 8.0f), 0.5f, -200.0f}; // 区域中心（32 格 × 0.25 m）
+    f.p.foamSlope = 0.05f;
+    f.p.foamGain = 10.0f;
+    f.run(5);
+    CHECK(f.at(31, 31) < -1e-3f);           // 中心被压下去
+    CHECK(f.grid[31 * 64 + 31].w == 10.0f); // 第 4 个分量记录水深
+    CHECK(f.grid[2 * 64 + 2].z == 0.0f);    // 远处平静：没有泡沫
+    float maxFoam = 0.0f;
+    for (const vec4& v : f.grid) maxFoam = std::max(maxFoam, v.z);
+    CHECK(maxFoam > 0.0f);
+}
+
+TEST_CASE("波纹：偶极子源（走动）前面推高、后面拉低；水花「压一下再抵消速度」后扩散成一圈，中心不会越陷越深") {
+    SUBCASE("偶极子") {
+        RippleFixture f(64);
+        f.step.sourceCount = 1;
+        f.step.sources[0] = {vec2(8.0f, 8.0f), 0.6f, 0.0f, vec2(40.0f, 0.0f)}; // 向 +X 走
+        f.run(3);
+        CHECK(f.at(34, 32) > 0.0f); // 前方（+X）隆起
+        CHECK(f.at(29, 32) < 0.0f); // 后方凹陷
+    }
+    SUBCASE("水花") {
+        const float depthSplash = 0.3f;
+        auto splash = [&](bool cancelVelocity) {
+            RippleFixture f(96);
+            const float a = depthSplash / (f.step.dt * f.step.dt);
+            f.step.sourceCount = 1;
+            f.step.sources[0] = {vec2(12.0f, 12.0f), 1.0f, -a};
+            f.run(1);
+            f.step.sources[0].strength = cancelVelocity ? a : 0.0f;
+            f.run(1);
+            f.step.sourceCount = 0;
+            f.run(60);
+            return f.at(47, 47); // 中心附近
+        };
+        const float withCancel = splash(true), impulseOnly = splash(false);
+        CHECK(std::abs(withCancel) < 0.1f * depthSplash);   // 凹坑扩散成波纹走了
+        CHECK(impulseOnly < -2.0f * depthSplash);           // 只压不抵消：中心一直往下陷
     }
 }

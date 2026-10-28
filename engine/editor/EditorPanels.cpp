@@ -634,8 +634,9 @@ void Editor::drawRenderSettingsPanel() {
     theme::sectionHeader("Pass 开关");
     theme::helpMarker("关闭的 pass 不执行；读取它输出的下游 pass 自动改读默认贴图，不会崩溃。\n详细的 barrier、资源见下方「Render Graph」面板。");
     rg::RenderGraph& graph = m_ctx.renderer->graph();
+    int passIndex = 0;
     for (const rg::PassReport& p : graph.lastReport()) {
-        ImGui::PushID(p.name.c_str());
+        ImGui::PushID(passIndex++); // 同名 pass 一帧里可能出现多次（每个物理步一个 OceanRipples），按序号区分
         ImGui::Checkbox("##on", &graph.passEnabled(p.name));
         ImGui::SameLine();
         const ImVec4 col = p.status == rg::PassReport::Status::Ran      ? theme::kOk

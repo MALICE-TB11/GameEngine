@@ -58,6 +58,20 @@ struct OceanSettings {
     float gridInner = 0.5f;   // 第一环半径（米）
     float gridOuter = 6000.0f; // 最外环半径（米）：再远就是地平线
     int gerstnerWaves = 32;   // 参考实现的波数
+
+    // ---- 局部交互（玩家、物体搅动出的波纹；见 OceanRipples.h） ----
+    bool ripples = true;
+    float rippleSize = 64.0f;         // 模拟区域边长（米），以玩家为中心、随玩家移动
+    int rippleResolution = 256;       // 每边格子数（128 / 256 / 512）：格子越小，能表示的波纹越短
+    float rippleMaxSpeed = 4.0f;      // 深水中波纹的传播速度上限（m/s），浅水按 √(g·h) 变慢；还受稳定性条件限制
+    float rippleDamping = 0.3f;       // 全局阻尼（1/秒）：波纹自然消失的快慢
+    float rippleSpongeWidth = 0.15f;  // 区域边缘吸收层的宽度（占边长的比例）：波纹在这里被「吃掉」，不会从边界反弹
+    float rippleSpongeStrength = 6.0f; // 吸收层最外圈的阻尼（1/秒）
+    float rippleStrength = 6.0f;      // 物体搅动水面的强度（每 m/s 速度产生的加速度，m/s²）
+    float rippleNormal = 1.0f;        // 波纹对法线的贡献倍数（艺术控制）
+    float rippleFoamSlope = 0.12f;    // 波纹坡度超过它开始起泡（尾迹泡沫）
+    float rippleFoamGain = 4.0f;      // 尾迹泡沫的强度
+    float rippleFoamDecay = 1.5f;     // 尾迹泡沫的消散时间（秒）
 };
 
 } // namespace eng::ocean

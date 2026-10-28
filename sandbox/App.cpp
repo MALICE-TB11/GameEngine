@@ -44,7 +44,10 @@ namespace ocean {
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(OceanSettings, enabled, mode, windSpeed, windDirectionDeg, fetchKm, depth, peakEnhancement,
                                                 spread, swell, heightScale, choppiness, cascadeSizes, foamBias, foamIntensity, foamDecay,
                                                 shoreFoamWidth, foamTiling, absorption, scatterColor, sssColor, sssStrength, roughness,
-                                                refraction, reflection, gridRings, gridSegments, gridInner, gridOuter, gerstnerWaves)
+                                                refraction, reflection, gridRings, gridSegments, gridInner, gridOuter, gerstnerWaves, ripples,
+                                                rippleSize, rippleResolution, rippleMaxSpeed, rippleDamping, rippleSpongeWidth,
+                                                rippleSpongeStrength, rippleStrength, rippleNormal, rippleFoamSlope, rippleFoamGain,
+                                                rippleFoamDecay)
 } // namespace ocean
 
 int App::run(const LaunchOptions& options) {
@@ -140,6 +143,13 @@ int App::run(const LaunchOptions& options) {
         m_scene.buildDrawList(m_drawList, float(m_loop.alpha()), lod, m_editor.selection(), m_editor.highlightStrength(now));
         addPlayerDraw(float(m_loop.alpha()));
         m_ocean.setFoamTexture(m_assets.texture(m_foamTexture)); // 指针只用于本帧（热重载会换掉它）
+        // 海床 = 地形高度图（波纹求解器用它判断岸和水深）。和泡沫贴图一样每帧传：地形重新生成时贴图会换
+        ocean::OceanSeabed seabed;
+        seabed.heightMap = m_terrain.heightTexture().view;
+        seabed.origin = m_heightfield.origin();
+        seabed.spacing = m_heightfield.spacing();
+        seabed.resolution = m_heightfield.resolution();
+        m_ocean.setSeabed(seabed);
         const bool drawn = m_renderer.drawFrame(m_view, m_drawList);
         if (drawn && counting) {
             ++frame;
@@ -148,6 +158,7 @@ int App::run(const LaunchOptions& options) {
         if (drawn && m_selfTest) {
             if (m_selfTest->afterFrame(m_ocean, m_renderer.graph(), m_oceanSettings, m_sim)) break;
             m_ocean.setSettings(m_oceanSettings); // 自测脚本可能改了参数（模式、风速）
+            if (m_selfTest->takeCaptureRequest() && !m_options.capturePath.empty()) m_renderer.requestCapture(m_options.capturePath);
         }
 
         if (m_options.frames > 0 && frame >= m_options.frames) break;
@@ -240,6 +251,8 @@ bool App::init(const LaunchOptions& options) {
         LOG_INFO("已按命令行关闭 pass: {}", name);
     }
     if (options.selfTest == "ocean") {
+        // 把玩家出生点放在岸边（下面初始化玩家时生效）：以玩家为中心的波纹区域里一半是水、一半是岸
+        m_playerSettings.spawn = vec3(0.0f, 3.0f, 85.0f);
         m_selfTest.emplace();
         m_selfTest->begin(m_ocean, m_oceanSettings);
         m_ocean.setSettings(m_oceanSettings);
@@ -491,6 +504,22 @@ void App::sanitizeSettings() {
     clampSetting(o.gridInner, 0.05f, 100.0f, "ocean.gridInner");
     clampSetting(o.gridOuter, o.gridInner + 1.0f, 50000.0f, "ocean.gridOuter");
     clampSetting(o.gerstnerWaves, 1, int(ocean::kMaxGerstnerWaves), "ocean.gerstnerWaves");
+    // 局部交互：分辨率只取 128 / 256 / 512（compute 按 8×8 分组；再大每步太慢）
+    const int rippleRes = o.rippleResolution <= 192 ? 128 : (o.rippleResolution <= 384 ? 256 : 512);
+    if (rippleRes != o.rippleResolution) {
+        LOG_WARN("配置项 ocean.rippleResolution = {} 不合法，已改为 {}", o.rippleResolution, rippleRes);
+        o.rippleResolution = rippleRes;
+    }
+    clampSetting(o.rippleSize, 8.0f, 512.0f, "ocean.rippleSize");
+    clampSetting(o.rippleMaxSpeed, 0.1f, 50.0f, "ocean.rippleMaxSpeed");
+    clampSetting(o.rippleDamping, 0.0f, 20.0f, "ocean.rippleDamping");
+    clampSetting(o.rippleSpongeWidth, 0.02f, 0.45f, "ocean.rippleSpongeWidth");
+    clampSetting(o.rippleSpongeStrength, 0.0f, 100.0f, "ocean.rippleSpongeStrength");
+    clampSetting(o.rippleStrength, 0.0f, 100.0f, "ocean.rippleStrength");
+    clampSetting(o.rippleNormal, 0.0f, 10.0f, "ocean.rippleNormal");
+    clampSetting(o.rippleFoamSlope, 0.0f, 10.0f, "ocean.rippleFoamSlope");
+    clampSetting(o.rippleFoamGain, 0.0f, 100.0f, "ocean.rippleFoamGain");
+    clampSetting(o.rippleFoamDecay, 0.05f, 30.0f, "ocean.rippleFoamDecay");
 }
 
 void App::saveSettings() {
@@ -620,6 +649,22 @@ void App::fixedUpdate(double dt) {
     m_player.fixedUpdate(float(dt));
     m_physics.step(float(dt));
     m_scenePhysics.syncAfterStep(m_scene);
+
+    // 局部交互：玩家搅动水面（入水越深、动得越快，波纹越大）。见 OceanRipples.h 的 RippleSource：
+    //   水平走动 → 偶极子：前面推高（船首波）、后面拉低（尾迹）
+    //   竖直运动 → 往下走（跳进水里）把水往下压，往上走（爬出水面）让水回填
+    // 波纹区域以玩家为中心；每个物理步推进一步，暂停时不推进
+    const physics::CharacterState& ps = m_player.state();
+    const physics::CharacterDesc body{}; // 玩家用的是默认胶囊尺寸
+    const vec2 playerXZ(ps.position.x, ps.position.z);
+    std::vector<ocean::RippleSource> sources;
+    const float water = m_ocean.heightAt(playerXZ.x, playerXZ.y, m_simTime);
+    const float submerged = std::clamp((water - ps.position.y) / body.height, 0.0f, 1.0f);
+    if (submerged > 0.0f && glm::length(ps.velocity) > 0.05f) {
+        const float k = m_oceanSettings.rippleStrength * submerged;
+        sources.push_back({playerXZ, body.radius * 1.5f, k * ps.velocity.y, k * vec2(ps.velocity.x, ps.velocity.z)});
+    }
+    m_ocean.queueRippleStep(m_simTime, float(dt), playerXZ, sources);
 }
 
 void App::rebuildTerrain() {

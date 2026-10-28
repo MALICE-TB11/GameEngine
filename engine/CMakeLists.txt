@@ -116,6 +116,7 @@ engine_module(terrain
 engine_module(ocean
     SOURCES
         ocean/OceanSpectrum.cpp
+        ocean/OceanRipples.cpp
         ocean/OceanRenderer.cpp
     DEPS engine_render)
 

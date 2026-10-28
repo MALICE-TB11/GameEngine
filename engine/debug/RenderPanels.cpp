@@ -31,7 +31,7 @@ void drawRenderGraphPanel(Renderer& renderer, RenderDocCapture* renderdoc, bool*
         for (const rg::PassReport& p : graph.lastReport()) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::PushID(p.name.c_str());
+            ImGui::PushID(index); // 同名 pass 一帧里可能出现多次（例如每个物理步一个 OceanRipples），按序号区分
             ImGui::Checkbox("##on", &graph.passEnabled(p.name));
             ImGui::PopID();
             ImGui::TableNextColumn();

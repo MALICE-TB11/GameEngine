@@ -54,7 +54,26 @@ constexpr VkFormat kOmegaFormat = VK_FORMAT_R32_SFLOAT;
 constexpr VkFormat kDisplacementFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr VkFormat kFoamFormat = VK_FORMAT_R32_SFLOAT; // r32f 是 storage image 的基础格式，不需要额外的设备特性
 constexpr VkFormat kLinearDepthFormat = VK_FORMAT_R32_SFLOAT;
-constexpr uint32_t kWaveBufferSize = kMaxGerstnerWaves * 2 * sizeof(vec4);
+// 海面的常量缓冲：Gerstner 波（A、B 各 kMaxGerstnerWaves 个）+ 波纹的网格映射（2 个 vec4）
+constexpr uint32_t kParamsBufferSize = (kMaxGerstnerWaves * 2 + 2) * sizeof(vec4);
+// 波纹状态：蛙跳格式里 u − u⁻ 是两个很接近的数相减，16 位会把小波纹吃掉，用 32 位
+constexpr VkFormat kRippleFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+
+// 必须与 shaders/ocean/ocean_ripples.hlsl 的 RipplePush 一致
+struct RipplePush {
+    vec4 grid;   // 格子边长、波速上限、阻尼、n
+    vec4 sponge; // 吸收层宽度（格）、吸收层强度、泡沫坡度阈值、泡沫强度
+    vec4 flags;  // 泡沫保留系数、有上一步状态、有海床、本步序号
+    vec4 seabed; // 高度图原点 xz、间距、分辨率
+    vec4 water;  // 平均海面、g、最小水深
+};
+// 必须与 ocean_ripples.hlsl 的 RippleStepData 一致（全是 vec4，常量缓冲里没有额外的对齐填充）
+struct RippleStepGpu {
+    vec4 step;   // Δt、shift.x、shift.y、扰动源个数
+    vec4 origin; // 区域原点 xz
+    vec4 sources[kMaxRippleSources * 2]; // 每个源两个：(位置, 半径, 竖直加速度)、(水平偶极子, -, -)
+};
+constexpr uint32_t kRippleStepBufferSize = sizeof(RippleStepGpu) * kMaxRippleStepsPerFrame;
 // 着色器的标志位（ocean_surface.hlsl 的 OCEAN_FLAG_*）
 constexpr uint32_t kFlagFft = 1, kFlagScene = 2;
 // 岸边泡沫「一推一退」的角频率（rad/s）：纯视觉参数。相位在 CPU 用 double 累计后取模再传，长时间运行不失精度
@@ -99,12 +118,16 @@ bool OceanRenderer::init(rhi::Device& device, PipelineCache& pipelines, JobSyste
                                            {bind(0, sampled, vsps), bind(1, sampled, VK_SHADER_STAGE_FRAGMENT_BIT),
                                             bind(2, sampled, VK_SHADER_STAGE_FRAGMENT_BIT), bind(3, sampled, VK_SHADER_STAGE_FRAGMENT_BIT),
                                             bind(4, sampled, VK_SHADER_STAGE_FRAGMENT_BIT), bind(5, sampled, VK_SHADER_STAGE_FRAGMENT_BIT),
-                                            bind(6, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, vsps)},
+                                            bind(6, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, vsps), bind(7, sampled, vsps)},
                                            "OceanSurfaceLayout");
+    m_rippleLayout = rhi::createSetLayout(
+        device, {bind(0, sampled, cs), bind(1, storage, cs), bind(2, sampled, cs), bind(3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, cs)},
+        "OceanRippleLayout");
 
     m_evolve = pipelines.createCompute({"OceanEvolve", "ocean/ocean_evolve", m_evolveLayout});
     m_fft = pipelines.createCompute({"OceanFFT", "ocean/ocean_fft", m_fftLayout});
     m_assemble = pipelines.createCompute({"OceanAssemble", "ocean/ocean_assemble", m_assembleLayout});
+    m_ripple = pipelines.createCompute({"OceanRipples", "ocean/ocean_ripples", m_rippleLayout});
 
     GraphicsPipelineDesc prep;
     prep.name = "OceanPrepare";
@@ -127,9 +150,12 @@ bool OceanRenderer::init(rhi::Device& device, PipelineCache& pipelines, JobSyste
     surf.state.polygonMode = VK_POLYGON_MODE_LINE;
     m_surfaceWire = pipelines.createGraphics(surf);
 
-    for (uint32_t i = 0; i < rhi::kFramesInFlight; ++i)
-        m_waveBuffers[i] = rhi::createBuffer(device, kWaveBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, rhi::MemoryUsage::Upload,
-                                             ("OceanWaves" + std::to_string(i)).c_str());
+    for (uint32_t i = 0; i < rhi::kFramesInFlight; ++i) {
+        m_waveBuffers[i] = rhi::createBuffer(device, kParamsBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, rhi::MemoryUsage::Upload,
+                                             ("OceanParams" + std::to_string(i)).c_str());
+        m_rippleStepBuffers[i] = rhi::createBuffer(device, kRippleStepBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                   rhi::MemoryUsage::Upload, ("OceanRippleSteps" + std::to_string(i)).c_str());
+    }
     rebuildGrid();
     return true;
 }
@@ -143,8 +169,10 @@ void OceanRenderer::shutdown() {
     rhi::destroyImage(*m_device, m_omega);
     rhi::destroyBuffer(*m_device, m_indexBuffer);
     rhi::destroyBuffer(*m_device, m_readbackBuffer);
+    rhi::destroyBuffer(*m_device, m_rippleReadbackBuffer);
     for (rhi::Buffer& b : m_waveBuffers) rhi::destroyBuffer(*m_device, b);
-    for (VkDescriptorSetLayout l : {m_evolveLayout, m_fftLayout, m_assembleLayout, m_prepareLayout, m_surfaceLayout})
+    for (rhi::Buffer& b : m_rippleStepBuffers) rhi::destroyBuffer(*m_device, b);
+    for (VkDescriptorSetLayout l : {m_evolveLayout, m_fftLayout, m_assembleLayout, m_prepareLayout, m_surfaceLayout, m_rippleLayout})
         vkDestroyDescriptorSetLayout(m_device->device(), l, nullptr);
     m_device = nullptr;
 }
@@ -264,6 +292,62 @@ void OceanRenderer::uploadSpectrum(std::shared_ptr<const OceanSpectrumData> data
     m_stats.uploadMs = msSince(t0);
     ++m_stats.rebuilds;
     m_spectrum = std::move(data);
+}
+
+// ---------------------------------------------------------------- 局部交互：物理步排队
+
+void OceanRenderer::queueRippleStep(double simTime, float dt, vec2 center, const std::vector<RippleSource>& sources) {
+    if (!m_settings.enabled || !m_settings.ripples || dt <= 0.0f) {
+        m_rippleReset = true; // 关掉期间的状态作废：重新打开时从平静水面开始
+        m_splashes.clear();
+        m_splashFollowUps.clear();
+        return;
+    }
+    PendingRipple r;
+    r.params = makeRippleParams(m_settings, dt);
+    // 网格映射变了（区域尺寸 / 分辨率）：旧状态的格子对不上新格子，作废
+    if (r.params.n != m_rippleParams.n || r.params.cellSize != m_rippleParams.cellSize) m_rippleReset = true;
+    const ivec2 origin = rippleOriginCell(center, r.params);
+    r.input.dt = dt;
+    // 原点按整格对齐，移动了几格就让 shader 读上一步状态时偏移几格（瞬移超过整个网格也没关系：全部读到平静水面）
+    r.input.shift = (m_rippleHasOrigin && !m_rippleReset) ? origin - m_rippleOrigin : ivec2(0);
+    r.input.origin = vec2(origin) * r.params.cellSize;
+    for (const RippleSource& src : sources)
+        if (r.input.sourceCount < kMaxRippleSources) r.input.sources[r.input.sourceCount++] = src;
+    // 一次性扰动（水花）：这一步加速度 -depth/Δt²，水面下沉 depth 米（见 rippleStep 的 Δt²·f 项）；
+    // 下一步再加一个反向的，把这一步带来的速度抵消掉 —— 结果是「静止的凹坑」，之后像石子入水一样向外扩散成一圈。
+    // 只有第一步的话，水面带着 -depth/Δt 的速度一直往下走，二维里凹坑会越陷越深，而不是变成波纹
+    for (const RippleSource& sp : m_splashFollowUps)
+        if (r.input.sourceCount < kMaxRippleSources) r.input.sources[r.input.sourceCount++] = {sp.position, sp.radius, sp.strength / (dt * dt)};
+    m_splashFollowUps.clear();
+    for (const RippleSource& sp : m_splashes)
+        if (r.input.sourceCount < kMaxRippleSources) {
+            r.input.sources[r.input.sourceCount++] = {sp.position, sp.radius, -sp.strength / (dt * dt)};
+            m_splashFollowUps.push_back(sp);
+        }
+    m_splashes.clear();
+    r.reset = m_rippleReset;
+
+    m_rippleReset = false;
+    m_rippleOrigin = origin;
+    m_rippleHasOrigin = true;
+    m_rippleParams = r.params;
+    m_rippleStepTime = simTime;
+    m_rippleStepDt = dt;
+    if (m_pendingRipples.size() >= kMaxRippleStepsPerFrame) {
+        // 一帧里排了太多步（画海的那一帧之前物理补了很多步）：丢掉最早的一步。
+        // 它的区域移动要并到下一步里，否则下一步的偏移是相对于一个 GPU 从没算过的原点
+        PendingRipple& next = m_pendingRipples[1];
+        next.input.shift += m_pendingRipples.front().input.shift;
+        next.reset = next.reset || m_pendingRipples.front().reset;
+        m_pendingRipples.erase(m_pendingRipples.begin());
+        ++m_rippleStats.droppedSteps;
+    }
+    m_pendingRipples.push_back(r);
+}
+
+void OceanRenderer::splash(vec2 xz, float radius, float depth) {
+    m_splashes.push_back({xz, radius, depth}); // strength 暂存深度，排队时换算成加速度
 }
 
 float OceanRenderer::heightAt(float x, float z, double simTime) const {
@@ -427,6 +511,14 @@ void OceanRenderer::addTransparentPasses(rg::RenderGraph& graph, const SceneTarg
             vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
         });
 
+    // ---- 局部交互（波纹） ----
+    const rg::TextureHandle ripples = addRipplePasses(graph);
+    // 海面常量缓冲里的波纹映射：区域原点、边长、插值系数（渲染时刻在最近两步之间的位置）
+    const float rippleCell = m_rippleParams.cellSize;
+    const float alpha = std::clamp(1.0f - float(m_rippleStepTime - view.simTime) / std::max(m_rippleStepDt, 1e-4f), 0.0f, 1.0f);
+    const vec4 ripple0(vec2(m_rippleOrigin) * rippleCell, rippleCell * float(m_rippleParams.n), alpha);
+    const vec4 ripple1(ripples.valid() ? 1.0f : 0.0f, s.rippleNormal, 1.0f / float(m_rippleParams.n), 0.0f);
+
     // ---- 海面 ----
     SurfacePush sp;
     sp.sizes = vec4(vec3(sizes), 0.0f); // w（标志位）在 execute 里按实际可用的输入填
@@ -445,23 +537,26 @@ void OceanRenderer::addTransparentPasses(rg::RenderGraph& graph, const SceneTarg
         .sampled(depthLinear)
         .sampled(targets.shadowAtlas);
     if (fft) pass.sampled(disp).sampled(deriv);
+    if (ripples.valid()) pass.sampled(ripples);
     pass.require([this] { return m_pipelines->ready(wireframe ? m_surfaceWire : m_surface); })
-        .execute([this, targets, colorCopy, depthLinear, disp, deriv, fft, sp, spectrum](rg::PassContext& ctx) {
+        .execute([this, targets, colorCopy, depthLinear, disp, deriv, fft, sp, spectrum, ripples, ripple0, ripple1](rg::PassContext& ctx) {
             const PipelineHandle p = wireframe ? m_surfaceWire : m_surface;
             const DefaultResources& def = *ctx.frame->defaults;
             SurfacePush push = sp;
             const bool scene = ctx.hasContent(colorCopy) && ctx.hasContent(depthLinear);
             push.sizes.w = float((fft ? kFlagFft : 0u) | (scene ? kFlagScene : 0u));
 
-            // Gerstner 波参数：每个在途帧一份缓冲，写本帧的那份
+            // Gerstner 波参数 + 波纹映射：每个在途帧一份缓冲，写本帧的那份
             const rhi::Buffer& waves = m_waveBuffers[ctx.frame->slot];
-            std::vector<vec4> data(kMaxGerstnerWaves * 2, vec4(0.0f));
+            std::vector<vec4> data(kMaxGerstnerWaves * 2 + 2, vec4(0.0f));
             for (size_t i = 0; i < spectrum->waves.size() && i < kMaxGerstnerWaves; ++i) {
                 const GerstnerWave& w = spectrum->waves[i];
                 data[i] = vec4(w.direction, w.k, w.omega);
                 data[kMaxGerstnerWaves + i] = vec4(w.amplitude, w.phase, w.steepness, 0.0f);
             }
-            std::memcpy(waves.mapped, data.data(), kWaveBufferSize);
+            data[kMaxGerstnerWaves * 2] = ripple0;
+            data[kMaxGerstnerWaves * 2 + 1] = ripple1;
+            std::memcpy(waves.mapped, data.data(), kParamsBufferSize);
             vmaFlushAllocation(m_device->allocator(), waves.allocation, 0, VK_WHOLE_SIZE);
 
             m_pipelines->bind(ctx.cmd, p, ctx.frame->globalSet);
@@ -473,13 +568,197 @@ void OceanRenderer::addTransparentPasses(rg::RenderGraph& graph, const SceneTarg
                 .sampledImage(3, ctx.view(depthLinear))
                 .sampledImage(4, ctx.view(targets.shadowAtlas))
                 .sampledImage(5, m_foamTex ? m_foamTex->view : def.white().view)
-                .uniformBuffer(6, waves.buffer, 0, kWaveBufferSize)
+                .uniformBuffer(6, waves.buffer, 0, kParamsBufferSize)
+                .sampledImage(7, ripples.valid() ? ctx.view(ripples) : def.black().view)
                 .update(ctx.frame->device, set);
             m_pipelines->bindSet1(ctx.cmd, p, set);
             m_pipelines->pushConstants(ctx.cmd, p, &push, sizeof(push));
             vkCmdBindIndexBuffer(ctx.cmd, m_indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexed(ctx.cmd, m_indexCount, 1, 0, 0, 0);
         });
+}
+
+// ---------------------------------------------------------------- 局部交互：compute pass
+
+rg::TextureHandle OceanRenderer::addRipplePasses(rg::RenderGraph& graph) {
+    m_rippleStats.stepsThisFrame = 0;
+    m_rippleStats.cellSize = m_rippleParams.cellSize;
+    m_rippleStats.speedLimit = rippleSpeedLimit(m_rippleParams.cellSize, m_rippleStepDt);
+    m_rippleStats.center = (vec2(m_rippleOrigin) + float(m_rippleParams.n / 2)) * m_rippleParams.cellSize;
+    // 这一帧的步会不会真的执行，构建图的时候就要知道：最新状态在 A 还是 B 取决于「实际写了哪一张」。
+    // 被关掉 / 管线没准备好 → 不排步、海面不采样波纹，状态作废（重新打开时从平静水面开始）。
+    // 波纹 pass 只有采样输入（可选），不会因为缺输入被图跳过，所以这两个条件就够了
+    if (!m_settings.ripples) {
+        m_pendingRipples.clear();
+        m_rippleAlive = false;
+        m_rippleReset = true;
+        return {};
+    }
+    const uint32_t n = m_rippleParams.n;
+    rg::TextureDesc d;
+    d.format = kRippleFormat;
+    d.width = d.height = n;
+    d.persistent = true; // 状态本身就是「上一步的结果」：A/B 交替，内容跨帧保留
+    d.name = "OceanRipplesA";
+    const rg::TextureHandle texA = graph.createTexture(d);
+    d.name = "OceanRipplesB";
+    const rg::TextureHandle texB = graph.createTexture(d);
+
+    if (!graph.passEnabled("OceanRipples") || !m_pipelines->ready(m_ripple)) {
+        // 仍然声明一个（不会执行的）pass：面板靠本帧的 pass 列表显示开关，不声明就没法再打开它
+        graph.addPass("OceanRipples", rg::PassType::Compute)
+            .sampled(texA)
+            .storageWrite(texB)
+            .require([this] { return m_pipelines->ready(m_ripple); })
+            .execute([](rg::PassContext&) {});
+        m_pendingRipples.clear();
+        m_rippleAlive = false;
+        m_rippleReset = true;
+        return {};
+    }
+    if (m_pendingRipples.empty() && !m_rippleAlive) return {};
+
+    const bool check = m_rippleCheckRequested && !m_rippleRecorded; // 上一次的结果还没被取走时不再录
+    for (uint32_t k = 0; k < m_pendingRipples.size(); ++k) {
+        const PendingRipple& r = m_pendingRipples[k];
+        const rg::TextureHandle in = m_rippleLatestB ? texB : texA;
+        const rg::TextureHandle out = m_rippleLatestB ? texA : texB;
+
+        RipplePush push;
+        push.grid = vec4(r.params.cellSize, r.params.maxSpeed, r.params.damping, float(n));
+        push.sponge = vec4(r.params.spongeCells, r.params.spongeStrength, r.params.foamSlope, r.params.foamGain);
+        push.flags = vec4(std::exp(-r.input.dt / r.params.foamDecay), 0.0f, m_seabed.heightMap ? 1.0f : 0.0f, float(k));
+        push.seabed = vec4(m_seabed.origin, m_seabed.spacing, float(m_seabed.resolution));
+        push.water = vec4(0.0f, kGravity, kRippleMinDepth, 0.0f); // 平均海面在 y = 0
+
+        RippleStepGpu gpu{};
+        gpu.step = vec4(r.input.dt, float(r.input.shift.x), float(r.input.shift.y), float(r.input.sourceCount));
+        gpu.origin = vec4(r.input.origin, 0.0f, 0.0f);
+        for (uint32_t i = 0; i < r.input.sourceCount; ++i) {
+            const RippleSource& src = r.input.sources[i];
+            gpu.sources[2 * i] = vec4(src.position, src.radius, src.strength);
+            gpu.sources[2 * i + 1] = vec4(src.push, 0.0f, 0.0f);
+        }
+
+        if (check && k == 0) addRippleCopyPass(graph, "OceanRippleCheckIn", in, 0);
+        const VkImageView seabed = m_seabed.heightMap; // 地形的贴图：只在本帧内用（App 每帧重新传）
+        graph.addPass("OceanRipples", rg::PassType::Compute) // 一帧里的每一步同名：面板上一个开关管全部
+            .sampled(in) // 可选输入：没有内容（第一步）时 shader 由 flags.y 得知，不去读
+            .storageWrite(out)
+            .require([this] { return m_pipelines->ready(m_ripple); })
+            .execute([this, in, out, push, gpu, k, n, seabed, reset = r.reset](rg::PassContext& ctx) {
+                RipplePush p = push;
+                const bool history = !reset && ctx.hasContent(in);
+                p.flags.y = history ? 1.0f : 0.0f;
+                m_rippleLastHadHistory = history;
+                const rhi::Buffer& steps = m_rippleStepBuffers[ctx.frame->slot];
+                std::memcpy(static_cast<char*>(steps.mapped) + k * sizeof(RippleStepGpu), &gpu, sizeof(gpu));
+                vmaFlushAllocation(m_device->allocator(), steps.allocation, k * sizeof(RippleStepGpu), sizeof(RippleStepGpu));
+                const DefaultResources& def = *ctx.frame->defaults;
+                m_pipelines->bind(ctx.cmd, m_ripple, ctx.frame->globalSet);
+                VkDescriptorSet set = ctx.frame->descriptors->allocate(m_rippleLayout);
+                rhi::DescriptorWriter()
+                    .sampledImage(0, ctx.view(in))
+                    .storageImage(1, ctx.view(out))
+                    .sampledImage(2, seabed ? seabed : def.black().view)
+                    .uniformBuffer(3, steps.buffer, 0, kRippleStepBufferSize)
+                    .update(ctx.frame->device, set);
+                m_pipelines->bindSet1(ctx.cmd, m_ripple, set);
+                m_pipelines->pushConstants(ctx.cmd, m_ripple, &p, sizeof(p));
+                vkCmdDispatch(ctx.cmd, (n + 7) / 8, (n + 7) / 8, 1);
+            });
+        if (check && k == 0) {
+            addRippleCopyPass(graph, "OceanRippleCheckOut", out, 1);
+            m_rippleCheckPending = {r.params, r.input, false, {}, {}};
+        }
+        m_rippleLatestB = !m_rippleLatestB;
+        ++m_rippleStats.stepsThisFrame;
+    }
+    m_pendingRipples.clear();
+    m_rippleAlive = true;
+    return m_rippleLatestB ? texB : texA;
+}
+
+void OceanRenderer::addRippleCopyPass(rg::RenderGraph& graph, const char* name, rg::TextureHandle tex, uint32_t slot) {
+    const uint32_t n = m_rippleParams.n;
+    const VkDeviceSize bytes = VkDeviceSize(n) * n * sizeof(vec4);
+    if (m_rippleReadbackBuffer.size < bytes * 2) {
+        if (m_rippleReadbackBuffer) {
+            auto old = std::make_shared<rhi::Buffer>(m_rippleReadbackBuffer);
+            m_device->deferDestroy([dev = m_device, old] { rhi::destroyBuffer(*dev, *old); });
+        }
+        m_rippleReadbackBuffer = rhi::createBuffer(*m_device, bytes * 2, VK_BUFFER_USAGE_TRANSFER_DST_BIT, rhi::MemoryUsage::Readback,
+                                                   "OceanRippleReadback");
+    }
+    // 拷贝源是必需输入：输入状态还没有内容（第一步）时图会跳过「输入」这一份，这一次校验就不记录
+    graph.addPass(name, rg::PassType::Transfer)
+        .transferSrc(tex)
+        .execute([this, tex, n, bytes, slot](rg::PassContext& ctx) {
+            VkBufferImageCopy region{};
+            region.bufferOffset = bytes * slot;
+            region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.imageExtent = {n, n, 1};
+            vkCmdCopyImageToBuffer(ctx.cmd, ctx.image(tex), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_rippleReadbackBuffer.buffer, 1, &region);
+            VkMemoryBarrier2 toHost{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+            toHost.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+            toHost.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+            toHost.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+            toHost.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+            VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+            dep.memoryBarrierCount = 1;
+            dep.pMemoryBarriers = &toHost;
+            vkCmdPipelineBarrier2(ctx.cmd, &dep);
+            if (slot == 0) {
+                m_rippleInputCopied = true;
+            } else if (m_rippleInputCopied && m_rippleCheckPending) {
+                // 输入、这一步、输出三个 pass 都执行了：记录下来，等 GPU 执行完再读
+                m_rippleRecorded = std::move(*m_rippleCheckPending);
+                m_rippleRecorded->hadHistory = m_rippleLastHadHistory;
+                m_rippleCheckRequested = false;
+            }
+        });
+    if (slot == 0) m_rippleInputCopied = false;
+}
+
+std::optional<RippleReadback> OceanRenderer::takeRippleCheck() {
+    if (!m_rippleRecorded || !m_device) return std::nullopt;
+    vkDeviceWaitIdle(m_device->device()); // 测试专用：等录制了拷贝的那一帧执行完
+    vmaInvalidateAllocation(m_device->allocator(), m_rippleReadbackBuffer.allocation, 0, VK_WHOLE_SIZE);
+    RippleReadback rb = std::move(*m_rippleRecorded);
+    m_rippleRecorded.reset();
+    const size_t cells = size_t(rb.params.n) * rb.params.n;
+    const auto* src = static_cast<const vec4*>(m_rippleReadbackBuffer.mapped);
+    rb.input.assign(src, src + cells);
+    rb.output.assign(src + cells, src + 2 * cells);
+    return rb;
+}
+
+OceanCheck OceanRenderer::verifyRipples(const RippleReadback& rb) {
+    OceanCheck out;
+    // 水深取 GPU 写在输出第 4 个分量里的值：海床高度图在 GPU 上，CPU 只验证「同样的输入 → 同样的输出」
+    std::vector<float> depth(rb.output.size());
+    for (size_t i = 0; i < depth.size(); ++i) depth[i] = rb.output[i].w;
+    RippleGrid cpu;
+    rippleStep(rb.input, rb.hadHistory, depth, rb.params, rb.step, cpu);
+
+    double sumSq = 0.0, maxErr = 0.0, maxPrevErr = 0.0;
+    for (size_t i = 0; i < cpu.size(); ++i) {
+        const vec4 g = rb.output[i];
+        for (int c = 0; c < 4; ++c)
+            if (!std::isfinite(g[c])) ++out.nonFinite;
+        sumSq += double(cpu[i].x) * cpu[i].x;
+        maxErr = std::max(maxErr, double(std::abs(g.x - cpu[i].x)));
+        maxPrevErr = std::max(maxPrevErr, double(std::abs(g.y - cpu[i].y)));
+        out.foamError = std::max(out.foamError, std::abs(g.z - cpu[i].z));
+    }
+    const double rms = std::sqrt(sumSq / std::max<size_t>(cpu.size(), 1));
+    out.maxError = float(maxErr / std::max(rms, 1e-9));
+    // u 的误差相对均方根 0.1%（GPU 的 exp 与 FMA 和 CPU 略有不同）；u⁻ 是直接拷过去的，必须完全相同
+    out.ok = out.nonFinite == 0 && rms > 1e-6 && out.maxError < 1e-3f && maxPrevErr == 0.0 && out.foamError < 1e-3f;
+    out.summary = "波纹 u 相对误差 " + std::to_string(out.maxError) + "（均方根 " + std::to_string(rms) + " m），泡沫误差 " +
+                  std::to_string(out.foamError) + "，非有限值 " + std::to_string(out.nonFinite) + (rb.hadHistory ? "" : "（无历史）");
+    if (rms <= 1e-6) out.summary += "；水面几乎平静，校验没有意义";
+    return out;
 }
 
 // ---------------------------------------------------------------- 回读与校验

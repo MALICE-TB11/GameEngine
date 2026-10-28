@@ -80,7 +80,8 @@ int main(int argc, char** argv) {
             LOG_WARN("未知参数: {}", arg);
         }
     }
-    if (!opts.capturePath.empty() && opts.frames <= 0) opts.frames = 60;
+    // 只给了 --capture：跑 60 帧截最后一帧。自测由脚本自己决定什么时候截图、什么时候结束
+    if (!opts.capturePath.empty() && opts.frames <= 0 && opts.selfTest.empty()) opts.frames = 60;
 
     eng::App app;
     const int code = app.run(opts);

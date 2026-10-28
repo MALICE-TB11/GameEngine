@@ -8,7 +8,8 @@
 // 着色（和其他材质共用 LightingInputs、BRDF、阴影；水面是介质边界，所以自己处理反射 + 折射）：
 //   反射 = 天空 × 菲涅尔（F0 = 0.02）+ 太阳 GGX 高光
 //   折射 = 拷贝的场景颜色 × e^{-σ·厚度}（RGB 各自吸收：红光最先消失）+ 水体散射
-//   浪尖透光（SSS）、泡沫（雅可比累积 + 岸边水深）
+//   浪尖透光（SSS）、泡沫（雅可比累积 + 岸边水深 + 波纹尾迹）
+// 波纹（局部交互，ocean_ripples.hlsl）：在大海浪之上再叠一层玩家周围的起伏，按世界坐标采样
 #include "common/lighting.hlsli"
 #include "common/sky.hlsli"
 #include "common/brdf.hlsli"
@@ -41,12 +42,15 @@ bool HasFlag(uint flag)
 [[vk::binding(3, 1)]] Texture2D<float> gSceneDepthLinear;   // 视空间距离（米），天空 = 1e6；没有 OCEAN_FLAG_SCENE 时是默认贴图
 [[vk::binding(4, 1)]] Texture2D<float> gShadowAtlas;
 [[vk::binding(5, 1)]] Texture2D<float4> gFoamTex;
-// Gerstner 波：A = (方向 xy, 波数 k, 角频率 ω)，B = (振幅, 初相位, Q, 0)
-[[vk::binding(6, 1)]] cbuffer GerstnerWaves
+// Gerstner 波：A = (方向 xy, 波数 k, 角频率 ω)，B = (振幅, 初相位, Q, 0)；之后是波纹的网格映射
+[[vk::binding(6, 1)]] cbuffer OceanParams
 {
     float4 gWaveA[64];
     float4 gWaveB[64];
+    float4 gRipple0; // xy = 波纹区域原点（世界 XZ），z = 区域边长（米），w = 插值系数（渲染时刻在最近两步之间的位置）
+    float4 gRipple1; // x = 1 有波纹，y = 法线强度，z = 1/格子数，w 未用
 };
+[[vk::binding(7, 1)]] Texture2D<float4> gRipples; // (u 本步, u 上一步, 尾迹泡沫, 水深)；没有波纹时是黑色默认贴图
 
 static const float F0_WATER = 0.02; // 水的折射率 1.33 → ((1.33-1)/(1.33+1))² ≈ 0.02
 
@@ -87,6 +91,31 @@ float3 GerstnerDisplacement(float2 xz, float spacing)
     return d;
 }
 
+// ---------------------------------------------------------------- 波纹
+
+// 世界坐标 xz 处的波纹（x = 高度，y = 尾迹泡沫）。波纹在固定步上求解，渲染时刻在两步之间：两步的高度线性插值
+float2 SampleRipples(float2 xz)
+{
+    if (gRipple1.x < 0.5)
+        return 0.0;
+    const float2 uv = (xz - gRipple0.xy) / gRipple0.z;
+    if (any(uv < 0.0) || any(uv > 1.0))
+        return 0.0;
+    const float4 r = gRipples.SampleLevel(gLinearClamp, uv, 0);
+    return float2(lerp(r.y, r.x, gRipple0.w), r.z);
+}
+
+// 波纹的坡度（中心差分，步长一个格子）
+float2 RippleSlope(float2 xz)
+{
+    if (gRipple1.x < 0.5)
+        return 0.0;
+    const float e = gRipple0.z * gRipple1.z; // 一个格子的边长
+    const float hx = SampleRipples(xz + float2(e, 0)).x - SampleRipples(xz - float2(e, 0)).x;
+    const float hz = SampleRipples(xz + float2(0, e)).x - SampleRipples(xz - float2(0, e)).x;
+    return float2(hx, hz) / (2.0 * e);
+}
+
 // ---------------------------------------------------------------- 顶点
 
 struct OceanVSOut
@@ -113,7 +142,9 @@ OceanVSOut VSMain(uint vid : SV_VertexID)
     const float growth = pow(gOcean.grid.w / gOcean.grid.z, 1.0 / float(max(rings - 2, 1u)));
     const float spacing = max(radius * (growth - 1.0), radius * 2.0 * PI / float(segments)) + 0.02;
 
-    const float3 d = HasFlag(OCEAN_FLAG_FFT) ? FftDisplacement(xz, spacing) : GerstnerDisplacement(xz, spacing);
+    float3 d = HasFlag(OCEAN_FLAG_FFT) ? FftDisplacement(xz, spacing) : GerstnerDisplacement(xz, spacing);
+    // 波纹按世界坐标求解：在大海浪把顶点移到的位置上取
+    d.y += SampleRipples(xz + d.xz).x;
     OceanVSOut o;
     o.worldPos = float3(xz.x + d.x, d.y, xz.y + d.z);
     o.lagrangian = xz;
@@ -196,7 +227,10 @@ float4 PSMain(OceanVSOut i, bool frontFace : SV_IsFrontFace) : SV_Target
         ws = SampleFft(i.lagrangian, footprint);
     else
         ws = SampleGerstner(i.lagrangian, footprint);
-    float3 N = ws.normal;
+    // 波纹：坡度直接加到法线上（小坡度近似：法线 ≈ normalize(-∂h/∂x, 1, -∂h/∂z)，两层的坡度相加）
+    const float2 rippleSlope = RippleSlope(i.worldPos.xz) * gRipple1.y;
+    float3 N = normalize(ws.normal / max(ws.normal.y, 0.05) - float3(rippleSlope.x, 0.0, rippleSlope.y));
+    ws.foam = saturate(ws.foam + SampleRipples(i.worldPos.xz).y); // 尾迹泡沫和破浪泡沫一起决定覆盖率
     if (!frontFace)
         N = -N; // 从水下往上看（M6 再做完整的水下效果）
 

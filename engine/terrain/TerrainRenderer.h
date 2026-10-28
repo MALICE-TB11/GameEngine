@@ -55,6 +55,8 @@ public:
     bool wireframe = false;
     bool showLod = false; // 按四叉树级别着色（调 LOD 参数时很直观）
     const TerrainStats& stats() const { return m_stats; }
+    // 高度图（R32F，纹素 = Heightfield 的采样）：海洋的波纹求解器拿它判断哪里是岸、水有多深。只在本帧内用
+    const rhi::Image& heightTexture() const { return m_heightTex; }
 
 private:
     struct Push;

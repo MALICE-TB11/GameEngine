@@ -10,13 +10,16 @@
 //   5. 关掉 OceanPrepare：海面照常运行（按深水着色）
 //   6. 暂停模拟：两次回读的相位时间与位移完全相同（海浪走模拟时间）
 //   7. 连续拖动风速 120 帧：统计帧时间 P95/P99、频谱重建次数，最后结果仍与 CPU 一致
-//   8. 切到 Gerstner：FFT 的 pass 都不再出现
+//   8. 波纹：在水里激起一圈波纹，回读一步的输入与输出，用 CPU 的 rippleStep 逐格重算比较
+//   9. 关掉 OceanRipples：pass 仍出现在列表里（可重新打开），海面照常
+//  10. 切到 Gerstner：FFT 的 pass 都不再出现
 // 任何一步不符合预期都用 LOG_ERROR 记录 —— 进程返回码随之变成 2，与冒烟测试同一套判定。
 
 #include "render/RenderGraph.h"
 
 #include <chrono>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace eng {
@@ -33,6 +36,8 @@ public:
     // 每帧 drawFrame 成功之后调用。可能修改 settings（App 随后要把它交给 OceanRenderer）。返回 true = 测试结束
     bool afterFrame(ocean::OceanRenderer& ocean, rg::RenderGraph& graph, ocean::OceanSettings& settings, SimulationControl& sim);
     int failures() const { return m_failures; }
+    // 脚本想在这一帧截图（波纹扩散开之后）；返回一次 true 后清零
+    bool takeCaptureRequest() { return std::exchange(m_captureRequested, false); }
 
 private:
     void enter(int step);
@@ -46,6 +51,8 @@ private:
     int m_totalFrames = 0;
     int m_failures = 0;
     bool m_waiting = false;  // 已请求回读，等结果
+    bool m_rippleChecked = false;
+    bool m_captureRequested = false;
     float m_windSpeed = 0.0f; // 原来的风速（拖动结束后恢复）
     // 暂停检查用
     float m_pausedTime = 0.0f;

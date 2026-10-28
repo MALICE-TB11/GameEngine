@@ -44,6 +44,7 @@ math 只依赖 GLM，任何层都可用；debug 可依赖 render；editor 在最
 - 图之外的代码会直接采样的 Render Graph 贴图（例如编辑器视口）设 `TextureDesc::externalRead`。
 - 地形的渲染网格、`Heightfield::heightAt`、Jolt 高度场必须是同一个三角形表面（每格沿 (x,z)→(x+1,z+1) 对角线切开）。
 - 海洋的两种实现（Gerstner / FFT）共用 `OceanSpectrum` 的同一份频谱与位移约定（y = a cos θ，水平 = −Q a d̂ sin θ，θ = k·x − ωt，FFT 演化用 e^{−iωt}），改一边要同步另一边，并跑 `sandbox --selftest ocean`（GPU 结果与 CPU 参考 `evaluateCascade` 逐点比较）。
+- 波纹（局部交互）的 GPU 版 `ocean_ripples.hlsl` 与 CPU 参考 `rippleStep` 一行对一行，改一边同步另一边；每个物理固定步一步（`OceanRenderer::queueRippleStep`）；扰动源的净体积要为零（偶极子、推一下再抵消），吸收层只阻尼速度。
 - 世界里随时间变化的东西（海浪、泡沫）用 `RenderView::simTime/simDt`（受暂停/时间缩放控制），不用墙钟 `time`；传给 GPU 的海洋时间先用 `oceanPhaseTime` 取模。
 - 需要读「上一帧结果」的模拟贴图用 `TextureDesc::persistent`（A/B 交替命名），而且只放历史状态，不放「本帧输出」（否则 pass 被跳过时下游读到旧数据）；多层数据用 `TextureDesc::layers`（shader 里是 Texture2DArray）。
 - storage 读取、拷贝源是**必需输入**：没有内容时 Render Graph 自动跳过该 pass、输出不标记，不需要在 execute 里检查。计算链的每一步用不同的逻辑贴图，不要让后一步覆盖前一步的贴图。

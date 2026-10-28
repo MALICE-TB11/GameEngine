@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 namespace eng {
 namespace {
@@ -198,13 +199,48 @@ bool OceanSelfTest::afterFrame(ocean::OceanRenderer& ocean, rg::RenderGraph& gra
             ocean.requestReadback();
             m_waiting = true;
         } else if (m_waiting && checkReadback(ocean, "拖动风速之后", true)) {
-            settings.mode = int(ocean::OceanMode::Gerstner);
+            settings.ripples = true;
             enter(8);
         }
         break;
     }
 
-    case 8: // Gerstner：FFT 的 pass 都不再出现，海面照常
+    case 8: { // 波纹：在岸外的水里激起一圈波纹，几步之后回读一步的输入、输出，用 CPU 的 rippleStep 逐格重算
+        // 玩家出生在岸边（App 在自测时设置），区域中心 = 玩家；往 +Z 15 米是水，且还在吸收层以内
+        if (m_frame == 1) ocean.splash(ocean.rippleStats().center + vec2(0.0f, 15.0f), 1.0f, 0.3f);
+        if (m_frame == 8) ocean.requestRippleCheck();
+        if (m_rippleChecked) {
+            // 校验完再等一会儿：约 0.5 秒时波纹已经扩散成一圈、还没衰减太多，这时截图（--capture），约 1.2 秒后进入下一步
+            if (m_frame == 30) m_captureRequested = true;
+            if (m_frame >= 72) {
+                graph.passEnabled("OceanRipples") = false;
+                enter(9);
+            }
+            break;
+        }
+        if (m_frame <= 8) break;
+        std::optional<ocean::RippleReadback> rb = ocean.takeRippleCheck();
+        if (!rb) break;
+        const ocean::OceanCheck c = ocean::OceanRenderer::verifyRipples(*rb);
+        if (!c.ok) fail("波纹：GPU 一步的结果与 CPU 参考不一致 —— " + c.summary);
+        else if (!rb->hadHistory) fail("波纹：校验的那一步没有读上一步的状态");
+        else LOG_INFO("海洋自测 [波纹] 通过：{}", c.summary);
+        m_rippleChecked = true;
+        break;
+    }
+
+    case 9: // 关掉波纹：pass 仍出现在列表里（面板能重新打开），海面照常
+        if (m_frame == 3) {
+            expectStatus(graph, "OceanRipples", rg::PassReport::Status::Disabled);
+            expectStatus(graph, "Ocean", rg::PassReport::Status::Ran);
+            LOG_INFO("海洋自测 [关闭 OceanRipples] 检查完成");
+            graph.passEnabled("OceanRipples") = true;
+            settings.mode = int(ocean::OceanMode::Gerstner);
+            enter(10);
+        }
+        break;
+
+    case 10: // Gerstner：FFT 的 pass 都不再出现，海面照常
         if (m_frame == 3) {
             if (findPass(graph, "OceanSpectrum") || findPass(graph, "OceanAssemble")) fail("Gerstner 模式下仍然有 FFT 的 pass");
             expectStatus(graph, "Ocean", rg::PassReport::Status::Ran);
