@@ -37,6 +37,12 @@ math 只依赖 GLM，任何层都可用；debug 可依赖 render；editor 在最
 - Shader 分层：`common/` 公共函数；材质遵循 `SurfaceData → ShadingModel` 固定接口。
 - 可调参数放 `config/*.json`，ImGui 修改后可保存、可热加载；**不要硬编码魔法数字**（物理常数与公式里的系数除外，需注释出处）。
 - 物理固定步长，渲染插值。
+- **可恢复的失败：报错、保留旧的（或用默认的）、继续运行；绝不覆盖用户数据。** 读不出来的文件（场景、`.meta`、配置）不要拿默认内容写回原路径。
+- 跨帧只存句柄（+ 下标 + 版本），不存指向资产内部的指针（`Material*`、`GpuMesh*`、`rhi::Image*`）；指针只在本帧内用。
+- 后台任务在自己的边界把异常转成失败结果，并保证回到主线程收尾（`JobSystem` 的 `runGuarded` 只是最后一道防线）。
+- 配置数值进入引擎前统一做范围检查（`App::sanitizeSettings` / `clampSetting`）；核心类（如 `FixedStepLoop`）自己也要保证不变量。
+- 图之外的代码会直接采样的 Render Graph 贴图（例如编辑器视口）设 `TextureDesc::externalRead`。
+- 地形的渲染网格、`Heightfield::heightAt`、Jolt 高度场必须是同一个三角形表面（每格沿 (x,z)→(x+1,z+1) 对角线切开）。
 
 ## 调试设施
 validation layer（Debug 默认开）、所有 Vulkan 对象 debug name、RenderDoc in-app 捕获（F12）、每个 pass 的 GPU timestamp。
@@ -72,6 +78,7 @@ validation layer（Debug 默认开）、所有 Vulkan 对象 debug name、Render
 
 ## 里程碑流程
 - 每个里程碑：Debug + Release 构建通过、单元测试 + 冒烟测试通过、validation 无报错、实际确认画面后**单独 git 提交**。
+- 验收还包括 [docs/稳定性与故障演练.md](docs/稳定性与故障演练.md) 里的故障演练（关 pass 后缩放、损坏场景、错误 `.meta`……），并记录冒烟测试输出的帧时间 P95/P99 与最长帧。
 - 每个里程碑在 `docs/` 写一篇中文笔记：解决的问题、mermaid 数据流图、关键公式（`$...$`）、扩展点汇总、动手练习。
 - README 维护模块地图、阅读顺序、里程碑进度。
 - 分三段推进，每段结束停下等用户确认：M0–M3 → M4–M5 → M6–M7。

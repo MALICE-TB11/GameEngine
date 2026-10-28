@@ -186,9 +186,21 @@ void Editor::drawSaveSceneAsPopup() {
     }
 }
 
+Material* Editor::selectedMaterial() {
+    if (!m_selectedMaterial) return nullptr;
+    const MaterialRef& ref = *m_selectedMaterial;
+    Model* model = m_ctx.assets->mutableModel(ref.model);
+    // 模型被热重载过（版本变了）、正在重载、或材质变少了：选中的那份材质已经不存在，取消选择
+    if (!model || m_ctx.assets->version(ref.model) != ref.version || ref.index >= model->materials.size()) {
+        m_selectedMaterial.reset();
+        return nullptr;
+    }
+    return &model->materials[ref.index];
+}
+
 void Editor::onSceneReplaced() {
     m_selection.reset();
-    m_selectedMaterial = nullptr;
+    m_selectedMaterial.reset();
 }
 
 void Editor::deleteSelection() {
@@ -196,7 +208,7 @@ void Editor::deleteSelection() {
     m_ctx.scene->remove(*m_selection);
     // 删除会让后面实体的 id 前移；最简单可靠的做法是清掉选择
     m_selection.reset();
-    m_selectedMaterial = nullptr;
+    m_selectedMaterial.reset();
 }
 
 void Editor::placeModelInFront(ModelHandle model, const std::string& name) {
@@ -217,7 +229,7 @@ void Editor::processPendingPlacements() {
         }
         // 就绪或失败都放进场景：失败时显示兜底立方体，至少看得到「这里有个东西没加载出来」
         m_selection = m_ctx.scene->instantiate(p.model, p.transform, p.name);
-        m_selectedMaterial = nullptr;
+        m_selectedMaterial.reset();
         m_scrollOutlinerToSelection = true;
         m_pendingPlacements.erase(m_pendingPlacements.begin() + long(i));
     }
@@ -240,7 +252,7 @@ void Editor::selectByName(const std::string& name) {
     for (EntityId id = 0; id < m_ctx.scene->entities().size(); ++id) {
         if (m_ctx.scene->entities()[id].name == name) {
             m_selection = id;
-            m_selectedMaterial = nullptr;
+            m_selectedMaterial.reset();
             m_scrollOutlinerToSelection = true;
             return;
         }
@@ -267,7 +279,7 @@ void Editor::handleShortcuts() {
             m_gameMode = false; // 游戏模式下 Esc 回到编辑器
         else {
             m_selection.reset();
-            m_selectedMaterial = nullptr;
+            m_selectedMaterial.reset();
         }
     }
     if (pressed(ImGuiKey_F5)) sim.paused = !sim.paused;
@@ -326,9 +338,9 @@ void Editor::drawMenuBar() {
     }
     if (ImGui::BeginMenu("编辑")) {
         if (ImGui::MenuItem("聚焦选中物体", "F", false, m_selection.has_value())) focusSelection();
-        if (ImGui::MenuItem("取消选择", "Esc", false, m_selection.has_value() || m_selectedMaterial)) {
+        if (ImGui::MenuItem("取消选择", "Esc", false, m_selection.has_value() || m_selectedMaterial.has_value())) {
             m_selection.reset();
-            m_selectedMaterial = nullptr;
+            m_selectedMaterial.reset();
         }
         if (ImGui::MenuItem("删除选中实体", "Delete", false, m_selection.has_value())) deleteSelection();
         ImGui::EndMenu();
@@ -851,7 +863,7 @@ void Editor::pickAt(const ImVec2& uv) {
         }
     }
     m_selection = best;
-    m_selectedMaterial = nullptr;
+    m_selectedMaterial.reset();
     m_scrollOutlinerToSelection = best.has_value();
 }
 

@@ -9,7 +9,8 @@ add_executable(engine_tests
     test_asset.cpp
     test_scene.cpp
     test_terrain.cpp
-    test_physics.cpp)
+    test_physics.cpp
+    test_robustness.cpp)
 # 链接引擎模块只是为了测试其中的纯逻辑（barrier 推导、烘焙、场景描述、地形四叉树、物理），测试不会创建 Vulkan 设备。
 # bc7enc 直接链接：测试要用它的解码器检查压缩质量。
 target_link_libraries(engine_tests PRIVATE engine_core engine_render engine_asset engine_world engine_terrain engine_physics

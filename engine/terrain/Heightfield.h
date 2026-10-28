@@ -47,7 +47,7 @@ public:
     // jobs 不为空时按行并行生成（100 万个采样 × 十几层噪声，Debug 构建单线程要好几秒）
     void generate(const TerrainSettings& settings, JobSystem* jobs = nullptr);
 
-    // 世界坐标查询（双线性插值）；超出范围时夹到边缘
+    // 世界坐标查询：与渲染网格、Jolt 碰撞体相同的三角形插值；超出范围时夹到边缘
     float heightAt(float x, float z) const;
     vec3 normalAt(float x, float z) const;
 

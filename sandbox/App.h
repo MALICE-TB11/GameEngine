@@ -28,6 +28,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace eng {
 
@@ -42,6 +43,7 @@ struct LaunchOptions {
     std::string select;                 // --select 名字：启动时选中该实体（截图/演示用）
     std::optional<std::array<float, 5>> camera; // --camera x,y,z,yaw,pitch：编辑器相机初始位置（截图用）
     bool terrainLod = false;            // --terrain-lod：地形按四叉树级别着色
+    std::vector<std::string> disabledPasses; // --disable-pass A,B：启动时关闭这些 pass（故障演练）
 };
 
 struct DebugSettings {
@@ -62,6 +64,7 @@ private:
     bool init(const LaunchOptions& options);
     void shutdown();
     void loadSettings();
+    void sanitizeSettings(); // 配置数值范围检查：非法值修正为最近的合法值并警告
     void saveSettings();
     bool openScene(const std::filesystem::path& projectRelative);
     void saveScene();

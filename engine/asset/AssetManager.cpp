@@ -132,9 +132,16 @@ void AssetManager::startLoad(uint32_t index) {
     jobs->submit([this, index, guid, db, jobs] {
         auto result = std::make_shared<std::optional<ModelData>>();
         auto error = std::make_shared<std::string>();
-        if (db->ensureCooked(guid, jobs, *error)) {
-            if (auto bytes = fs::readBinary(db->cookedPath(guid))) *result = readCookedModel(*bytes);
-            if (!*result && error->empty()) *error = "烘焙文件损坏或版本不符: " + db->cookedPath(guid).string();
+        // 异常（损坏的文件、内存不足……）在这里转成「加载失败」：无论如何都要回到主线程收尾，
+        // 否则槽位永远停在「加载中」、pendingCount 永远不归零
+        try {
+            if (db->ensureCooked(guid, jobs, *error)) {
+                if (auto bytes = fs::readBinary(db->cookedPath(guid))) *result = readCookedModel(*bytes);
+                if (!*result && error->empty()) *error = "烘焙文件损坏或版本不符: " + db->cookedPath(guid).string();
+            }
+        } catch (const std::exception& e) {
+            result->reset();
+            *error = std::string("加载时发生异常: ") + e.what();
         }
         // 回到主线程：上传 GPU、替换槽位内容
         jobs->runOnMainThread([this, index, result, error] {
@@ -230,9 +237,14 @@ void AssetManager::startTextureLoad(uint32_t index) {
     jobs->submit([this, index, guid, db, jobs] {
         auto result = std::make_shared<std::optional<TextureData>>();
         auto error = std::make_shared<std::string>();
-        if (db->ensureCooked(guid, jobs, *error)) {
-            if (auto bytes = fs::readBinary(db->cookedPath(guid))) *result = readCookedTexture(*bytes);
-            if (!*result && error->empty()) *error = "烘焙文件损坏或版本不符: " + db->cookedPath(guid).string();
+        try { // 同模型：异常转成失败结果，保证主线程收尾
+            if (db->ensureCooked(guid, jobs, *error)) {
+                if (auto bytes = fs::readBinary(db->cookedPath(guid))) *result = readCookedTexture(*bytes);
+                if (!*result && error->empty()) *error = "烘焙文件损坏或版本不符: " + db->cookedPath(guid).string();
+            }
+        } catch (const std::exception& e) {
+            result->reset();
+            *error = std::string("加载时发生异常: ") + e.what();
         }
         jobs->runOnMainThread([this, index, result, error] {
             TextureSlot& s = m_textures[index];

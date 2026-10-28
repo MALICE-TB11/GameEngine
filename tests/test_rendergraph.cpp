@@ -61,7 +61,7 @@ TEST_CASE("写后读：颜色附件 → 采样，插入布局转换和 RAW 依�
     CHECK(r.clears.empty());
 }
 
-TEST_CASE("读后读：同布局不插 barrier，之后的写会等待全部读者") {
+TEST_CASE("读后读：同布局不转换布局，但新阶段的读者要补写入依赖；之后的写会等待全部读者") {
     const std::vector<ResourceDecl> res = {transient("Tex")};
     const std::vector<PassDecl> passes = {
         pass("Produce", {{0, Access::StorageWrite}}, true, PassType::Compute),
@@ -70,8 +70,13 @@ TEST_CASE("读后读：同布局不插 barrier，之后的写会等待全部读�
         pass("Overwrite", {{0, Access::StorageWrite}}, true, PassType::Compute),
     };
     const CompileResult r = compile(passes, res);
-    CHECK(r.passes[1].barriers.size() == 1); // GENERAL → SHADER_READ_ONLY
-    CHECK(r.passes[2].barriers.empty());     // 读后读，布局相同
+    CHECK(r.passes[1].barriers.size() == 1); // GENERAL → SHADER_READ_ONLY（目标阶段只有顶点/片元）
+    // ReadB 在 compute 阶段读：上一个 barrier 没覆盖它，要补「Produce 的写 → compute 读」（布局不变）。
+    // （这里以前断言「不需要 barrier」，那是错的：compute 读者与写入之间没有任何依赖）
+    REQUIRE(r.passes[2].barriers.size() == 1);
+    CHECK(r.passes[2].barriers[0].from.layout == r.passes[2].barriers[0].to.layout);
+    CHECK((r.passes[2].barriers[0].from.access & VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT) != 0);
+    CHECK(r.passes[2].barriers[0].to.stage == VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
     REQUIRE(r.passes[3].barriers.size() == 1);
     const Barrier& war = r.passes[3].barriers[0];
     // WAR：要同时等图形 pass 的片元着色器和 compute pass 的读取

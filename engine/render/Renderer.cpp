@@ -278,6 +278,7 @@ rg::TextureDesc viewportDesc(VkFormat format, VkExtent2D extent) {
     d.width = extent.width;
     d.height = extent.height;
     d.fallback = rg::Fallback::Black;
+    d.externalRead = true; // ImGui 直接采样它：所有写它的 pass 被关掉时要真的清成黑色
     return d;
 }
 } // namespace
@@ -287,7 +288,7 @@ VkImageView Renderer::useViewportOutput(uint32_t width, uint32_t height) {
     // 面板被拖得很小时也保留最小尺寸，避免创建 0 尺寸贴图
     m_viewportExtent = {std::max(width, 16u), std::max(height, 16u)};
     return m_graph.preparePooledTexture(viewportDesc(m_swapchain.format(), m_viewportExtent),
-                                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+                                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
 }
 
 void Renderer::useBackbufferOutput() {

@@ -11,6 +11,7 @@
 //   sandbox.exe --select ruins/Pillar_R         启动时选中某个实体（检视器显示它）
 //   sandbox.exe --camera 0,80,200,-90,-25       编辑器相机初始位置 x,y,z 与朝向 yaw,pitch（度），截图用
 //   sandbox.exe --terrain-lod                   地形按四叉树级别着色（截图/调参用）
+//   sandbox.exe --disable-pass FXAA,Tonemap     启动时关闭这些 pass（故障演练：下游应自动用默认资源）
 
 #include "App.h"
 
@@ -51,6 +52,14 @@ int main(int argc, char** argv) {
                 LOG_WARN("--camera 格式应为 x,y,z[,yaw,pitch]");
         } else if (arg == "--terrain-lod") {
             opts.terrainLod = true;
+        } else if (arg == "--disable-pass" && i + 1 < argc) {
+            // 逗号分隔的 pass 名，例如 --disable-pass FXAA,Tonemap：验证「pass 被关掉时下游不崩、不报 validation」
+            std::string list = argv[++i];
+            for (size_t start = 0; start <= list.size();) {
+                const size_t comma = std::min(list.find(',', start), list.size());
+                if (comma > start) opts.disabledPasses.push_back(list.substr(start, comma - start));
+                start = comma + 1;
+            }
         } else if (arg == "--renderdoc") {
             opts.renderdoc = true;
         } else if (arg == "--no-renderdoc") {

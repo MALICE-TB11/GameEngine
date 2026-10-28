@@ -1,9 +1,12 @@
 // 物理封装（PhysicsWorld）与场景同步的行为测试：真的跑 Jolt 模拟，检查结果是否符合物理直觉。
 #include "physics/PhysicsWorld.h"
+#include "terrain/Heightfield.h"
 #include "world/SceneDesc.h"
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <cmath>
 #include <vector>
 
 using namespace eng;
@@ -70,6 +73,39 @@ TEST_CASE("物理：射线检测命中高度场，法线朝上") {
     CHECK(hit->normal.y > 0.99f);
     // 打向天空：没有命中
     CHECK_FALSE(w.castRay(vec3(0.0f, 10.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f), 50.0f).has_value());
+}
+
+TEST_CASE("地形：CPU 高度查询与 Jolt 碰撞体是同一个表面") {
+    // 起伏剧烈的小地形：每格四个角不共面，对角线切法不同会差出明显的高度
+    terrain::TerrainSettings s;
+    s.resolution = 129;
+    s.worldSize = 128.0f;
+    s.islandCenter = {0.0f, 0.0f};
+    s.islandRadius = 50.0f;
+    s.maxHeight = 30.0f;
+    s.hillScale = 12.0f;
+    s.plateauRadius = 0.0f;
+    terrain::Heightfield hf;
+    hf.generate(s);
+
+    PhysicsWorld w;
+    REQUIRE(w.init());
+    BodyDesc d;
+    d.shape = w.createHeightfield(hf.samples(), hf.resolution(), hf.origin(), hf.spacing());
+    REQUIRE(w.addBody(d).valid());
+
+    // 在格子内部取很多点（避开采样点本身，那里任何插值都一样）
+    float worst = 0.0f;
+    for (int i = 0; i < 400; ++i) {
+        const float x = -50.0f + float(i % 20) * 5.0f + 0.37f;
+        const float z = -50.0f + float(i / 20) * 5.0f + 0.71f;
+        const auto hit = w.castRay(vec3(x, 500.0f, z), vec3(0.0f, -1.0f, 0.0f), 1000.0f);
+        INFO("x = ", x, ", z = ", z, ", heightAt = ", hf.heightAt(x, z));
+        REQUIRE(hit.has_value());
+        worst = std::max(worst, std::abs(hit->point.y - hf.heightAt(x, z)));
+    }
+    // Jolt 按 2×2 块把高度量化成 8 位，所以允许约 1 cm 的误差；切法不一致时误差会到几十厘米
+    CHECK(worst < 0.02f);
 }
 
 TEST_CASE("物理：角色落地、站稳、按期望速度移动") {

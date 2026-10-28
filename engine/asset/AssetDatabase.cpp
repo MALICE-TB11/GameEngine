@@ -58,6 +58,24 @@ nlohmann::json AssetDatabase::defaultSettings(AssetType type, const stdfs::path&
     return nlohmann::json::object();
 }
 
+nlohmann::json AssetDatabase::reloadSettings(const AssetRecord& rec) {
+    nlohmann::json settings = defaultSettings(rec.type, rec.source);
+    if (rec.meta.empty()) return settings; // 外部临时资产没有 .meta
+    const auto text = fs::readText(rec.meta);
+    if (!text) return rec.settings;
+    try {
+        const auto j = nlohmann::json::parse(*text);
+        if (j.contains("settings") && j["settings"].is_object()) settings.merge_patch(j["settings"]);
+    } catch (const std::exception& e) {
+        // .meta 写坏了：沿用上一次成功读到的设置，不覆盖文件
+        LOG_ERROR("{} 解析失败（{}），沿用之前的导入设置", rec.meta.string(), e.what());
+        return rec.settings;
+    }
+    std::lock_guard lock(m_mutex);
+    if (auto it = m_records.find(rec.guid); it != m_records.end()) it->second.settings = settings;
+    return settings;
+}
+
 std::optional<AssetRecord> AssetDatabase::loadOrCreateMeta(const stdfs::path& source, AssetType type) {
     AssetRecord rec;
     rec.type = type;
@@ -231,6 +249,18 @@ bool AssetDatabase::ensureCooked(Guid guid, JobSystem* jobs, std::string& error)
 
     if (!isStale(guid)) return true;
 
+    // 重新读一遍 .meta：它可能刚被改过（热重载正是因此触发的），登记时缓存的设置已经过期
+    const nlohmann::json settings = reloadSettings(*rec);
+    // 单个字段类型写错（例如 "maxLods": "4"）时用默认值并警告，而不是抛异常让整个加载失败
+    auto get = [&](const char* key, auto def) {
+        try {
+            return settings.value(key, def);
+        } catch (const std::exception&) {
+            LOG_WARN("{}.meta 的设置 {} 类型不对，使用默认值", rec->displayName, key);
+            return def;
+        }
+    };
+
     const auto start = std::chrono::steady_clock::now();
     std::vector<uint8_t> bytes;
     if (rec->type == AssetType::Model) {
@@ -240,11 +270,11 @@ bool AssetDatabase::ensureCooked(Guid guid, JobSystem* jobs, std::string& error)
             return false;
         }
         ModelCookSettings s;
-        s.optimize = rec->settings.value("optimize", true);
-        s.maxLods = rec->settings.value("maxLods", 4u);
-        s.lodReduction = rec->settings.value("lodReduction", 0.5f);
-        s.lodMaxError = rec->settings.value("lodMaxError", 0.02f);
-        s.compressTextures = rec->settings.value("compressTextures", true);
+        s.optimize = get("optimize", true);
+        s.maxLods = std::clamp(get("maxLods", 4u), 1u, 8u);
+        s.lodReduction = std::clamp(get("lodReduction", 0.5f), 0.05f, 0.95f);
+        s.lodMaxError = std::clamp(get("lodMaxError", 0.02f), 0.0f, 1.0f);
+        s.compressTextures = get("compressTextures", true);
         if (!cookModel(*data, s, jobs, error)) return false;
         bytes = writeCookedModel(*data);
     } else if (rec->type == AssetType::Texture) {
@@ -255,15 +285,15 @@ bool AssetDatabase::ensureCooked(Guid guid, JobSystem* jobs, std::string& error)
         }
         TextureData t;
         t.name = rec->source.stem().string();
-        const std::string usage = rec->settings.value("usage", std::string("color"));
+        const std::string usage = get("usage", std::string("color"));
         t.usage = usage == "normal" ? TextureUsage::Normal : usage == "data" ? TextureUsage::Data : TextureUsage::Color;
         t.format = t.usage == TextureUsage::Color ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
         t.width = uint32_t(img->width);
         t.height = uint32_t(img->height);
         t.mips.push_back(std::move(img->rgba8));
         TextureCookSettings ts;
-        ts.generateMips = rec->settings.value("generateMips", true);
-        ts.compress = rec->settings.value("compress", true);
+        ts.generateMips = get("generateMips", true);
+        ts.compress = get("compress", true);
         if (!cookTexture(t, ts, jobs, error)) return false;
         bytes = writeCookedTexture(t);
     } else {

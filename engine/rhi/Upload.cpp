@@ -8,6 +8,13 @@
 
 namespace eng::rhi {
 
+namespace {
+// 上传的贴图会被哪些阶段读取：顶点着色器（地形高度图）、片元着色器（材质）、计算着色器（M5 起的 FFT 海洋等）。
+// barrier 的目标阶段必须覆盖所有实际读者，否则没被覆盖的那个读者与上传之间没有同步。
+constexpr VkPipelineStageFlags2 kTextureConsumers =
+    VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+} // namespace
+
 Buffer createBufferWithData(Device& device, const void* data, VkDeviceSize size, VkBufferUsageFlags usage, const char* name) {
     Buffer staging = createBuffer(device, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryUsage::Upload, "Staging");
     std::memcpy(staging.mapped, data, size);
@@ -17,9 +24,20 @@ Buffer createBufferWithData(Device& device, const void* data, VkDeviceSize size,
     device.immediateSubmit([&](VkCommandBuffer cmd) {
         const VkBufferCopy region{0, 0, size};
         vkCmdCopyBuffer(cmd, staging.buffer, buffer.buffer, 1, &region);
+        // 「执行完成」≠「后续读取可见」：fence 只告诉 CPU 拷贝做完了，并不会把拷贝的写入
+        // 对之后提交里的顶点/索引/着色器读取变得可见。必须有一个内存依赖覆盖实际的消费者。
+        // pipeline barrier 的第二个同步范围包括同一队列上「提交顺序更晚」的所有命令，所以放在这里就够了。
+        // 消费者不确定（顶点、索引、uniform、storage 都可能）→ 目标用 ALL_COMMANDS / MEMORY_READ，一次性上传不在乎这点开销。
+        VkMemoryBarrier2 visible{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        visible.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        visible.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        visible.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        visible.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.memoryBarrierCount = 1;
+        dep.pMemoryBarriers = &visible;
+        vkCmdPipelineBarrier2(cmd, &dep);
     });
-    // immediateSubmit 内部等待了 fence，且之后使用该缓冲的命令在更晚的提交里，
-    // 队列提交顺序 + fence 已保证拷贝完成；顶点读取不需要额外 barrier。
     destroyBuffer(device, staging);
     return buffer;
 }
@@ -54,7 +72,7 @@ Image createTexture2D(Device& device, const void* rgba8, uint32_t width, uint32_
         const ImageState undefined{VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE, VK_IMAGE_LAYOUT_UNDEFINED};
         const ImageState dst{VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL};
         const ImageState src{VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL};
-        const ImageState shaderRead{VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+        const ImageState shaderRead{kTextureConsumers,
                                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
 
         for (uint32_t m = 0; m < mips; ++m) mipBarrier(m, undefined, dst);
@@ -117,7 +135,7 @@ Image createTextureFromMips(Device& device, VkFormat format, uint32_t width, uin
     device.immediateSubmit([&](VkCommandBuffer cmd) {
         const ImageState undefined{VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE, VK_IMAGE_LAYOUT_UNDEFINED};
         const ImageState dst{VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL};
-        const ImageState shaderRead{VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+        const ImageState shaderRead{kTextureConsumers,
                                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         imageBarrier(cmd, image.image, VK_IMAGE_ASPECT_COLOR_BIT, undefined, dst);
         vkCmdCopyBufferToImage(cmd, staging.buffer, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,

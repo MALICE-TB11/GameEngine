@@ -6,6 +6,8 @@
 
 #include <doctest/doctest.h>
 
+#include <cmath>
+
 using namespace eng;
 
 namespace {
@@ -39,7 +41,19 @@ TEST_CASE("高度场：原点平台被整平，远海是海床") {
     CHECK(hf.maxHeight() > 2.0f);
 }
 
-TEST_CASE("高度场：采样点上精确、采样点之间双线性插值") {
+TEST_CASE("高度场：极端参数（平台半径 0、岛屿半径极小）不产生 NaN") {
+    terrain::TerrainSettings s = smallIsland();
+    s.plateauRadius = 0.0f;
+    terrain::Heightfield hf;
+    hf.generate(s);
+    for (float h : hf.samples()) REQUIRE(std::isfinite(h));
+    s.plateauRadius = 10.0f;
+    s.islandRadius = 0.001f;
+    hf.generate(s);
+    for (float h : hf.samples()) REQUIRE(std::isfinite(h));
+}
+
+TEST_CASE("高度场：采样点上精确、采样点之间按三角形插值") {
     terrain::Heightfield hf;
     hf.generate(smallIsland());
     const vec2 o = hf.origin();

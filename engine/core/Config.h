@@ -101,4 +101,16 @@ private:
     std::string m_lastError;
 };
 
+// 把一个配置值夹到合法范围，被修正时写警告（哪一项、原值、范围）。返回是否修正过。
+// 「JSON 类型对、数值不合法」（零 FOV、负的帧时间、超大阴影图）由它兜住：程序照常运行，日志里看得到问题。
+// 条件写成 !(lo ≤ v ≤ hi)，这样 NaN 也会被修正成 lo。
+template <class T>
+bool clampSetting(T& v, T lo, T hi, const char* name) {
+    if (v >= lo && v <= hi) return false; // 合法：未修正
+    const T old = v;
+    v = (v != v) ? lo : std::clamp(v, lo, hi);
+    LOG_WARN("配置项 {} = {} 超出范围 [{}, {}]，已修正为 {}", name, old, lo, hi, v);
+    return true;
+}
+
 } // namespace eng

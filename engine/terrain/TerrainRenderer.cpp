@@ -28,11 +28,13 @@ std::vector<uint32_t> buildPatchIndices() {
     const uint32_t n = kPatchQuads, n1 = n + 1;
     std::vector<uint32_t> idx;
     idx.reserve(size_t(n) * n * 6 + size_t(4) * n * 6);
-    // 逆时针为正面：从上往下看（+Y 朝向观察者）时 (a, c, b) 是逆时针
+    // 每个格子沿 a(x,z) → d(x+1,z+1) 的对角线切成两个三角形 —— 与 Jolt 高度场、Heightfield::heightAt
+    // 完全相同的切法。四个角高度不共面时，两种对角线给出的表面不一样（差可达几厘米），
+    // 切法不一致就会出现「脚底悬空 / 陷进地里」。逆时针为正面（从 +Y 往下看）。
     for (uint32_t z = 0; z < n; ++z)
         for (uint32_t x = 0; x < n; ++x) {
             const uint32_t a = z * n1 + x, b = a + 1, c = a + n1, d = c + 1;
-            idx.insert(idx.end(), {a, c, b, b, c, d});
+            idx.insert(idx.end(), {a, c, d, a, d, b});
         }
 
     // 裙边：每条边上「网格顶点 → 正下方的裙边顶点」组成一排竖直四边形，正面朝外。

@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 
 namespace eng {
 
@@ -39,8 +40,10 @@ public:
 
     void setSettings(const FixedStepSettings& s) {
         m_settings = s;
-        m_settings.fixedHz = std::max(1.0, s.fixedHz);
+        // 自己保证不变量，不依赖调用方：std::clamp 要求 lo ≤ hi，负的 maxFrameTime 会是未定义行为
+        m_settings.fixedHz = std::clamp(s.fixedHz, 1.0, 1000.0);
         m_settings.maxStepsPerFrame = std::max(1, s.maxStepsPerFrame);
+        m_settings.maxFrameTime = std::max(s.maxFrameTime, 1.0 / m_settings.fixedHz);
     }
     const FixedStepSettings& settings() const { return m_settings; }
 
@@ -56,7 +59,11 @@ public:
             ++steps;
         }
         // 补不完的时间直接丢掉（相当于游戏世界短暂变慢），而不是留到下一帧继续欠债
-        if (steps == m_settings.maxStepsPerFrame && m_accumulator >= dt) m_accumulator = 0.0;
+        if (steps == m_settings.maxStepsPerFrame && m_accumulator >= dt) {
+            m_droppedSeconds += m_accumulator;
+            ++m_droppedFrames;
+            m_accumulator = 0.0;
+        }
         m_lastSteps = steps;
         return steps;
     }
@@ -64,11 +71,16 @@ public:
     // 渲染插值因子：0 = 上一步状态，1 = 当前步状态
     double alpha() const { return m_accumulator / fixedDt(); }
     int lastSteps() const { return m_lastSteps; }
+    // 因为补步上限而丢弃模拟时间的帧数与总时长：比平均帧率更能说明「卡顿时模拟慢了多少」
+    uint64_t droppedFrames() const { return m_droppedFrames; }
+    double droppedSeconds() const { return m_droppedSeconds; }
 
 private:
     FixedStepSettings m_settings;
     double m_accumulator = 0.0;
     int m_lastSteps = 0;
+    uint64_t m_droppedFrames = 0;
+    double m_droppedSeconds = 0.0;
 };
 
 } // namespace eng

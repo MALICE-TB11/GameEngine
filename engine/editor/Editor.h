@@ -166,7 +166,16 @@ private:
 
     // 选择
     std::optional<EntityId> m_selection;
-    Material* m_selectedMaterial = nullptr; // 资源浏览器里选中的材质（检视器显示它）
+    // 资源浏览器里选中的材质（检视器显示它）。不存 Material*：模型热重载会整个换掉材质数组，
+    // 旧指针就悬空了。存「模型句柄 + 材质下标 + 模型版本」，每帧用 selectedMaterial() 重新解析，
+    // 版本对不上（被热重载过）就自动取消选择。
+    struct MaterialRef {
+        ModelHandle model;
+        uint32_t index = 0;
+        uint32_t version = 0;
+    };
+    std::optional<MaterialRef> m_selectedMaterial;
+    Material* selectedMaterial();
     bool m_scrollOutlinerToSelection = false; // 在视口里点选后，大纲滚动到该实体
     char m_outlinerFilter[64] = {};
     bool m_openSaveAs = false;

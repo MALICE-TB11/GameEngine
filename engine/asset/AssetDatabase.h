@@ -62,6 +62,8 @@ public:
 private:
     nlohmann::json defaultSettings(AssetType type, const std::filesystem::path& source) const;
     std::optional<AssetRecord> loadOrCreateMeta(const std::filesystem::path& source, AssetType type);
+    // 烘焙前重新读取 .meta 的导入设置（并更新登记）；读失败时返回上一次的设置
+    nlohmann::json reloadSettings(const AssetRecord& rec);
     static std::string key(const std::filesystem::path& p);
 
     std::filesystem::path m_assetRoot;

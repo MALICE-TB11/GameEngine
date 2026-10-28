@@ -6,6 +6,9 @@
 
 #include <imgui.h>
 
+#include <algorithm>
+#include <bit>
+#include <cmath>
 #include <thread>
 
 namespace eng {
@@ -47,6 +50,7 @@ int App::run(const LaunchOptions& options) {
     const double startTime = last;
     int frame = 0;
     bool resizedDown = false, resizedUp = false, assetsSettled = false;
+    std::vector<float> frameMs; // 冒烟测试计入的每帧耗时：退出时报告 P95/P99/最长帧（平均帧率掩盖卡顿）
     while (!m_window.shouldClose()) {
         m_window.pollEvents();
         if (m_window.isMinimized()) {
@@ -122,13 +126,28 @@ int App::run(const LaunchOptions& options) {
         lod.thresholdPx = m_rendererSettings.lodThresholdPx;
         m_scene.buildDrawList(m_drawList, float(m_loop.alpha()), lod, m_editor.selection(), m_editor.highlightStrength(now));
         addPlayerDraw(float(m_loop.alpha()));
-        if (m_renderer.drawFrame(m_view, m_drawList) && counting) ++frame;
+        if (m_renderer.drawFrame(m_view, m_drawList) && counting) {
+            ++frame;
+            if (m_options.frames > 0) frameMs.push_back(float(dt * 1000.0));
+        }
 
         if (m_options.frames > 0 && frame >= m_options.frames) break;
     }
 
-    const uint32_t errors = log::errorCount();
+    if (frameMs.size() > 1) {
+        // 第一帧包含窗口缩放、管线预热，不计入
+        std::vector<float> s(frameMs.begin() + 1, frameMs.end());
+        std::sort(s.begin(), s.end());
+        auto pct = [&](float p) { return s[std::min(s.size() - 1, size_t(p * float(s.size() - 1) + 0.5f))]; };
+        float sum = 0.0f;
+        for (float v : s) sum += v;
+        LOG_INFO("帧时间：平均 {:.2f} ms · P50 {:.2f} · P95 {:.2f} · P99 {:.2f} · 最长 {:.2f} ms（{} 帧）；补步上限丢弃 {} 次共 {:.3f} 秒模拟时间",
+                 sum / float(s.size()), pct(0.5f), pct(0.95f), pct(0.99f), s.back(), s.size(), m_loop.droppedFrames(),
+                 m_loop.droppedSeconds());
+    }
+    // 先清理再统计：资源销毁阶段的 validation 报错（泄漏、销毁仍在使用的对象）也要让冒烟测试失败
     shutdown();
+    const uint32_t errors = log::errorCount();
     if (errors > 0) {
         LOG_ERROR("运行期间出现 {} 条错误日志，返回码 2", errors);
         return 2;
@@ -185,6 +204,10 @@ bool App::init(const LaunchOptions& options) {
     m_terrain.setLayerTextures(loadTerrainLayers());
     rebuildTerrain();
     m_terrain.showLod = options.terrainLod;
+    for (const std::string& name : options.disabledPasses) {
+        m_renderer.graph().passEnabled(name) = false;
+        LOG_INFO("已按命令行关闭 pass: {}", name);
+    }
     m_renderer.addFeature(&m_terrain);
     m_player.init(m_physics, m_playerSettings);
     applyPlayerSettings();
@@ -194,11 +217,18 @@ bool App::init(const LaunchOptions& options) {
 
     // ---- 场景：优先打开场景文件；不存在时生成演示场景并保存 ----
     const std::filesystem::path scene = options.scene.empty() ? m_sceneSettings.file : options.scene;
-    if (!openScene(scene)) {
-        LOG_INFO("场景文件 {} 不存在，生成演示场景", scene.string());
+    if (!std::filesystem::exists(fs::resolve(scene))) {
+        LOG_INFO("场景文件 {} 不存在，生成演示场景并保存", scene.string());
         m_scenePath = scene;
         createDemoScene();
         saveScene();
+    } else if (!openScene(scene)) {
+        // 文件存在但读不出来（JSON 写坏了、被占用……）：绝不能覆盖它 —— 里面可能是用户辛苦搭的场景。
+        // 演示场景只放在内存里，当前场景路径换成另一个文件名，之后 Ctrl+S 也不会写回坏文件。
+        m_scenePath = scene.parent_path() / ("recovered_" + scene.filename().string());
+        LOG_ERROR("场景文件 {} 无法读取，原文件保持不动；临时使用演示场景（保存会写到 {}）", scene.generic_string(),
+                  m_scenePath.generic_string());
+        createDemoScene();
     }
 
     EditorContext ctx;
@@ -291,6 +321,7 @@ void App::loadSettings() {
     m_terrainSettings = m_config.get<terrain::TerrainSettings>("terrain");
     m_physicsSettings = m_config.get<physics::PhysicsSettings>("physics");
     m_playerSettings = m_config.get<PlayerSettings>("player");
+    sanitizeSettings();
     // 热加载时只更新「改了立刻能生效」的参数；地形形状要点「重新生成」，物理容量要重启
     m_terrain.setSettings(m_terrainSettings);
     if (m_physics.initialized()) {
@@ -302,6 +333,86 @@ void App::loadSettings() {
     m_renderer.setShadowSettings(m_shadowSettings);
     m_renderer.setLighting(m_lighting);
     m_camera.setSettings(m_cameraSettings);
+}
+
+void App::sanitizeSettings() {
+    // 所有配置都从这里进入引擎：在这里统一检查数值范围，非法值修正并警告。
+    // 范围是「不会让数学或资源创建出错」的宽松界限，不是推荐值。
+    clampSetting(m_windowSettings.width, 320, 7680, "window.width");
+    clampSetting(m_windowSettings.height, 240, 4320, "window.height");
+    clampSetting(m_rendererSettings.lodThresholdPx, 0.05f, 64.0f, "renderer.lodThresholdPx");
+
+    ShadowSettings& sh = m_shadowSettings;
+    clampSetting(sh.maxDistance, 5.0f, 2000.0f, "shadows.maxDistance");
+    clampSetting(sh.splitLambda, 0.0f, 1.0f, "shadows.splitLambda");
+    // 图集边长必须是 2 的幂（4 个象限要整除）且不能超过显卡能力；8192² 的 D32 已经占 256 MB
+    const uint32_t atlas = std::bit_ceil(std::clamp(sh.atlasSize, 512u, 8192u));
+    if (atlas != sh.atlasSize) {
+        LOG_WARN("配置项 shadows.atlasSize = {} 不合法，已修正为 {}", sh.atlasSize, atlas);
+        sh.atlasSize = atlas;
+    }
+    clampSetting(sh.depthBias, 0.0f, 0.05f, "shadows.depthBias");
+    clampSetting(sh.normalBias, 0.0f, 10.0f, "shadows.normalBias");
+    clampSetting(sh.pcfRadius, 0.0f, 8.0f, "shadows.pcfRadius");
+    clampSetting(sh.casterExtent, 0.0f, 5000.0f, "shadows.casterExtent");
+
+    LightingSettings& L = m_lighting;
+    clampSetting(L.exposure, 0.001f, 1000.0f, "lighting.exposure");
+    clampSetting(L.sunIntensity, 0.0f, 1000.0f, "lighting.sunIntensity");
+    clampSetting(L.sunAngularRadiusDeg, 0.01f, 10.0f, "lighting.sunAngularRadiusDeg");
+    clampSetting(L.ambientIntensity, 0.0f, 100.0f, "lighting.ambientIntensity");
+
+    clampSetting(m_loopSettings.fixedHz, 10.0, 1000.0, "loop.fixedHz");
+    clampSetting(m_loopSettings.maxStepsPerFrame, 1, 32, "loop.maxStepsPerFrame");
+    clampSetting(m_loopSettings.maxFrameTime, 0.001, 2.0, "loop.maxFrameTime");
+
+    CameraSettings& c = m_cameraSettings;
+    clampSetting(c.fovDeg, 10.0f, 150.0f, "camera.fovDeg");
+    clampSetting(c.nearPlane, 0.001f, 10.0f, "camera.nearPlane");
+    clampSetting(c.moveSpeed, 0.01f, 1000.0f, "camera.moveSpeed");
+    clampSetting(c.lookSensitivity, 0.001f, 10.0f, "camera.lookSensitivity");
+
+    terrain::TerrainSettings& t = m_terrainSettings;
+    // 分辨率必须是 32 × 2ⁿ + 1（四叉树每一级都对齐到采样点）：取最接近的合法值
+    const uint32_t cells = std::max(t.resolution, 2u) - 1;
+    const uint32_t levels = std::clamp(uint32_t(std::lround(std::log2(std::max(1.0, double(cells) / 32.0)))), 1u, 7u);
+    const uint32_t res = (32u << levels) + 1;
+    if (res != t.resolution) {
+        LOG_WARN("配置项 terrain.resolution = {} 不合法（需要 32×2ⁿ+1），已修正为 {}", t.resolution, res);
+        t.resolution = res;
+    }
+    clampSetting(t.worldSize, 16.0f, 16384.0f, "terrain.worldSize");
+    clampSetting(t.islandRadius, 10.0f, 10000.0f, "terrain.islandRadius");
+    clampSetting(t.coastNoise, 0.0f, 2.0f, "terrain.coastNoise");
+    clampSetting(t.maxHeight, 0.0f, 2000.0f, "terrain.maxHeight");
+    clampSetting(t.seabedDepth, 0.0f, 1000.0f, "terrain.seabedDepth");
+    clampSetting(t.hillScale, 1.0f, 5000.0f, "terrain.hillScale");
+    clampSetting(t.plateauRadius, 0.0f, 1000.0f, "terrain.plateauRadius");
+    clampSetting(t.lodDistanceFactor, 0.5f, 16.0f, "terrain.lodDistanceFactor");
+    clampSetting(t.skirtDepth, 0.0f, 32.0f, "terrain.skirtDepth");
+    clampSetting(t.blendSharpness, 0.01f, 2.0f, "terrain.blendSharpness");
+    for (int i = 0; i < 4; ++i) {
+        clampSetting(t.layerTiling[i], 0.1f, 500.0f, "terrain.layerTiling");
+        clampSetting(t.layerRoughness[i], 0.02f, 1.0f, "terrain.layerRoughness");
+    }
+
+    physics::PhysicsSettings& ps = m_physicsSettings;
+    clampSetting(ps.maxBodies, 64u, 65536u, "physics.maxBodies");
+    clampSetting(ps.collisionSteps, 1, 8, "physics.collisionSteps");
+    clampSetting(ps.threads, 0u, 32u, "physics.threads");
+    clampSetting(ps.tempMemoryMB, 4u, 512u, "physics.tempMemoryMB");
+
+    PlayerSettings& p = m_playerSettings;
+    clampSetting(p.walkSpeed, 0.0f, 50.0f, "player.walkSpeed");
+    clampSetting(p.sprintSpeed, 0.0f, 100.0f, "player.sprintSpeed");
+    clampSetting(p.jumpSpeed, 0.0f, 50.0f, "player.jumpSpeed");
+    clampSetting(p.acceleration, 0.1f, 100.0f, "player.acceleration");
+    clampSetting(p.cameraDistance, 0.5f, 50.0f, "player.cameraDistance");
+    clampSetting(p.cameraHeight, 0.0f, 5.0f, "player.cameraHeight");
+    clampSetting(p.mouseSensitivity, 0.001f, 5.0f, "player.mouseSensitivity");
+    clampSetting(p.minPitchDeg, -89.0f, 89.0f, "player.minPitchDeg");
+    clampSetting(p.maxPitchDeg, p.minPitchDeg, 89.0f, "player.maxPitchDeg");
+    clampSetting(p.fallLimit, -10000.0f, 0.0f, "player.fallLimit");
 }
 
 void App::saveSettings() {

@@ -21,6 +21,7 @@ void TonemapPass::init(rhi::Device& device, PipelineCache& pipelines, VkFormat o
 }
 
 void TonemapPass::shutdown() {
+    if (!m_device) return; // init 失败（或从没 init）时也能安全调用
     vkDestroyDescriptorSetLayout(m_device->device(), m_setLayout, nullptr);
 }
 

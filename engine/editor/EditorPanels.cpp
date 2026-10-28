@@ -200,7 +200,7 @@ void Editor::drawOutliner() {
             const std::string label = icon + leaf;
             if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_AllowOverlap | ImGuiSelectableFlags_AllowDoubleClick)) {
                 m_selection = id;
-                m_selectedMaterial = nullptr;
+                m_selectedMaterial.reset();
                 if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) focusSelection();
             }
             if (selected || !e.visible) ImGui::PopStyleColor();
@@ -309,24 +309,31 @@ void Editor::drawAssetBrowser() {
         }
         if (ImGui::BeginTabItem("材质")) {
             // 色块网格：已加载模型的材质，点击后在检视器中编辑
-            std::vector<Material*> materials;
+            struct Entry {
+                Material* material;
+                MaterialRef ref;
+            };
+            std::vector<Entry> materials;
             for (const auto& info : assets.loaded())
                 if (Model* model = assets.mutableModel(info.handle); model && info.status == asset::AssetStatus::Ready)
-                    for (Material& m : model->materials) materials.push_back(&m);
+                    for (uint32_t k = 0; k < model->materials.size(); ++k)
+                        materials.push_back({&model->materials[k], {info.handle, k, assets.version(info.handle)}});
             const float cell = 64.0f;
             const int columns = std::max(1, int(ImGui::GetContentRegionAvail().x / (cell + 8.0f)));
             int i = 0;
-            for (Material* m : materials) {
+            const Material* current = selectedMaterial();
+            for (const Entry& entry : materials) {
+                Material* m = entry.material; // 只在本帧内使用，不保存
                 ImGui::PushID(m);
                 if (i % columns != 0) ImGui::SameLine();
                 ImGui::BeginGroup();
-                const bool selected = m_selectedMaterial == m;
+                const bool selected = current == m;
                 if (selected) {
                     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f);
                     ImGui::PushStyleColor(ImGuiCol_Border, theme::kSelection);
                 }
                 if (ImGui::ColorButton("##swatch", linearToDisplay(m->params.baseColor), ImGuiColorEditFlags_NoTooltip, ImVec2(cell, cell * 0.7f))) {
-                    m_selectedMaterial = m;
+                    m_selectedMaterial = entry.ref;
                 }
                 if (selected) {
                     ImGui::PopStyleColor();
@@ -396,10 +403,10 @@ void Editor::drawInspector() {
         ImGui::End();
         return;
     }
-    if (m_selectedMaterial) {
+    if (Material* mat = selectedMaterial()) {
         theme::sectionHeader("材质资源");
-        drawMaterialEditor(*m_selectedMaterial);
-        if (m_selection && ImGui::Button("← 返回选中实体")) m_selectedMaterial = nullptr;
+        drawMaterialEditor(*mat);
+        if (m_selection && ImGui::Button("← 返回选中实体")) m_selectedMaterial.reset();
     } else if (m_selection && *m_selection < m_ctx.scene->entities().size()) {
         drawEntityInspector(m_ctx.scene->entity(*m_selection), *m_selection);
     } else {

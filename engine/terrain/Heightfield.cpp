@@ -57,6 +57,9 @@ float ridged(float x, float y, uint32_t seed, int octaves) {
 }
 
 float smoothstep(float a, float b, float x) {
+    // 退化区间（例如编辑器里把平台半径拖到 0）：按阶跃处理。否则 0/0 = NaN 会写进高度场，
+    // 渲染出黑洞、Jolt 里变成没有碰撞的窟窿
+    if (b <= a) return x < a ? 0.0f : 1.0f;
     const float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f);
     return t * t * (3.0f - 2.0f * t);
 }
@@ -119,7 +122,10 @@ float Heightfield::heightAt(float x, float z) const {
     const uint32_t x0 = std::min(uint32_t(fx), m_resolution - 2), z0 = std::min(uint32_t(fz), m_resolution - 2);
     const float tx = fx - float(x0), tz = fz - float(z0);
     const float h00 = sample(x0, z0), h10 = sample(x0 + 1, z0), h01 = sample(x0, z0 + 1), h11 = sample(x0 + 1, z0 + 1);
-    return (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
+    // 不用双线性插值：渲染网格和 Jolt 碰撞体都是「三角形」，每格沿 (x,z)→(x+1,z+1) 对角线切开。
+    // 查询必须落在同一个三角形平面上，三者才是同一个表面。
+    if (tx >= tz) return h00 + tx * (h10 - h00) + tz * (h11 - h10); // 三角形 (0,0)-(1,0)-(1,1)
+    return h00 + tz * (h01 - h00) + tx * (h11 - h01);               // 三角形 (0,0)-(0,1)-(1,1)
 }
 
 vec3 Heightfield::normalAt(float x, float z) const {

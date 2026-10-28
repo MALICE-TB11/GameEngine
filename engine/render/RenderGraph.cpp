@@ -102,6 +102,18 @@ CompileResult compile(const std::vector<PassDecl>& passes, const std::vector<Res
                     // 只读深度附件没法换成默认贴图：改为「写并清空」，深度测试全部通过
                     access = Access::DepthWrite;
                     load = LoadOp::Clear;
+                } else if (resources[res].materializeIfUnwritten) {
+                    // 图之外的代码也直接采样这张图（编辑器视口经 ImGui 显示）：只在图内部换 view 不够，
+                    // 外部看到的还是真实图像 —— 可能是旧画面，尺寸刚变时甚至是未初始化、布局不对的显存。
+                    // 所以先把真实图像清成默认值，再按正常流程转成采样布局。
+                    rhi::ImageState from = sourceOf(res, true);
+                    from.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+                    const rhi::ImageState to = stateFor(Access::TransferDst, PassType::Transfer);
+                    cp.clearBarriers.push_back({res, from, to});
+                    cp.clears.push_back(res);
+                    state[res] = to;
+                    lastWrite[res] = {to.stage, to.access, VK_IMAGE_LAYOUT_UNDEFINED};
+                    content[res] = true;
                 } else {
                     cp.substituted.push_back(res); // 执行时绑定默认贴图，不需要 barrier
                     continue;
@@ -129,8 +141,16 @@ CompileResult compile(const std::vector<PassDecl>& passes, const std::vector<Res
                 cp.barriers.push_back({res, from, target});
                 cur = target;
             } else {
-                // 读之后再读、布局相同：不需要 barrier。把阶段合并起来，
-                // 之后若有写入，barrier 会同时等待这两处读取。
+                // 读之后再读、布局相同：读与读之间不需要同步。但要注意「上一次写入」：
+                // 之前那个 barrier 的目标阶段只覆盖了当时的读者。新读者如果在别的阶段
+                // （例如先被片元着色器采样，再被计算着色器采样），它和那次写入之间还没有任何依赖，
+                // 必须补一个「最近写入 → 新阶段」的 barrier（布局不变）。
+                const VkPipelineStageFlags2 uncovered = target.stage & ~cur.stage;
+                if (uncovered && lastWrite[res].stage != VK_PIPELINE_STAGE_2_NONE) {
+                    const rhi::ImageState from{lastWrite[res].stage, lastWrite[res].access, cur.layout};
+                    cp.barriers.push_back({res, from, {uncovered, target.access, target.layout}});
+                }
+                // 阶段合并起来：之后若有写入，barrier 会同时等待所有读取
                 cur.stage |= target.stage;
                 cur.access |= target.access;
             }
@@ -221,6 +241,7 @@ void RenderGraph::init(rhi::Device& device, DefaultResources& defaults) {
 }
 
 void RenderGraph::shutdown() {
+    if (!m_device) return; // init 失败（或从没 init）时也能安全调用
     for (auto& [name, p] : m_pool) rhi::destroyImage(*m_device, p.image);
     m_pool.clear();
 }
@@ -236,6 +257,7 @@ TextureHandle RenderGraph::createTexture(const TextureDesc& desc) {
     Resource r;
     r.desc = desc;
     r.format = desc.format;
+    if (desc.externalRead) r.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT; // 没人写时要能清屏
     if (desc.width && desc.height) {
         r.extent = {desc.width, desc.height};
     } else {
@@ -376,6 +398,7 @@ void RenderGraph::execute(VkCommandBuffer cmd, FrameContext& frame, rhi::GpuProf
             // 但阶段要保留：这样本帧第一次写入会等上一帧对它的读取结束（跨帧的 WAR 冒险）。
             res[i].initial = m_pool[r.desc.name].state;
             res[i].lastWrite = m_pool[r.desc.name].lastWrite;
+            res[i].materializeIfUnwritten = r.desc.externalRead;
         }
     }
 
@@ -406,6 +429,14 @@ void RenderGraph::execute(VkCommandBuffer cmd, FrameContext& frame, rhi::GpuProf
         for (uint32_t s : cp.substituted) m_report[i].substituted.push_back(m_resources[s].desc.name);
         if (!cp.executed) continue;
 
+        // 被外部直接采样、但本帧没人写的贴图：先清成默认值（见 compile 的「容错 1」）
+        emitBarriers(cp.clearBarriers);
+        for (uint32_t r : cp.clears) {
+            const float v = m_resources[r].desc.fallback == Fallback::White ? 1.0f : 0.0f;
+            const VkClearColorValue color{{v, v, v, 1.0f}};
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdClearColorImage(cmd, m_resources[r].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1, &range);
+        }
         emitBarriers(cp.barriers);
         rhi::beginLabel(cmd, pass.name.c_str());
         const uint32_t scope = profiler ? profiler->begin(cmd, pass.name.c_str()) : UINT32_MAX;

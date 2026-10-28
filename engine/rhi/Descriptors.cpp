@@ -23,6 +23,7 @@ void DescriptorAllocator::init(Device& device, const char* name) {
 }
 
 void DescriptorAllocator::shutdown() {
+    if (!m_device) return; // init 失败（或从没 init）时也能安全调用
     for (VkDescriptorPool p : m_pools) vkDestroyDescriptorPool(m_device->device(), p, nullptr);
     m_pools.clear();
 }

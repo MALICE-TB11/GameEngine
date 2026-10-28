@@ -22,6 +22,7 @@ void GpuProfiler::init(Device& device) {
 }
 
 void GpuProfiler::shutdown() {
+    if (!m_device) return; // init 失败（或从没 init）时也能安全调用
     for (Slot& s : m_slots)
         if (s.pool) vkDestroyQueryPool(m_device->device(), s.pool, nullptr);
     m_slots = {};

@@ -14,6 +14,7 @@ void PipelineCache::init(rhi::Device& device, VkDescriptorSetLayout globalLayout
 }
 
 void PipelineCache::shutdown() {
+    if (!m_device) return; // init 失败（或从没 init）时也能安全调用
     VkDevice dev = m_device->device();
     for (Entry& e : m_entries) {
         if (e.pipeline) vkDestroyPipeline(dev, e.pipeline, nullptr);

@@ -3,8 +3,24 @@
 #include "core/Log.h"
 
 #include <algorithm>
+#include <exception>
 
 namespace eng {
+
+namespace {
+// 任务边界的最后一道防线：异常逃出线程入口会直接 std::terminate 整个程序。
+// 这里只负责「记日志、不让进程死掉、计数照常减一」；资产加载等任务应在自己内部把异常转成失败结果
+// （见 AssetManager），否则调用方等待的状态永远不会收尾。
+void runGuarded(const JobSystem::Job& job, const char* where) {
+    try {
+        job();
+    } catch (const std::exception& e) {
+        LOG_ERROR("{}任务抛出未处理的异常: {}", where, e.what());
+    } catch (...) {
+        LOG_ERROR("{}任务抛出未知异常", where);
+    }
+}
+} // namespace
 
 void JobSystem::init(uint32_t workers) {
     if (!m_workers.empty()) return;
@@ -30,7 +46,7 @@ void JobSystem::submit(Job job, std::shared_ptr<JobCounter> counter) {
     if (counter) ++counter->pending;
     if (m_workers.empty()) {
         // 没有初始化线程池（例如单元测试）：退化为同步执行，行为仍然正确
-        job();
+        runGuarded(job, "后台");
         if (counter) --counter->pending;
         return;
     }
@@ -49,7 +65,7 @@ bool JobSystem::tryRunOne() {
         task = std::move(m_queue.front());
         m_queue.pop_front();
     }
-    task.job();
+    runGuarded(task.job, "后台");
     if (task.counter) --task.counter->pending;
     return true;
 }
@@ -64,7 +80,7 @@ void JobSystem::workerLoop() {
             task = std::move(m_queue.front());
             m_queue.pop_front();
         }
-        task.job();
+        runGuarded(task.job, "后台");
         if (task.counter) --task.counter->pending;
     }
 }
@@ -102,7 +118,7 @@ uint32_t JobSystem::pumpMainThread(uint32_t maxJobs) {
             job = std::move(m_mainQueue.front());
             m_mainQueue.pop_front();
         }
-        job();
+        runGuarded(job, "主线程");
         ++ran;
     }
     return ran;

@@ -75,6 +75,8 @@ struct ResourceDecl {
     bool hasFinal = false;           // 是否要求帧末处于特定状态（交换链 → PRESENT）
     rhi::ImageState final;
     bool clearIfUnwritten = false;   // 帧末仍没被写过时先清屏（避免显示垃圾内存）
+    // 被读取时仍没有内容：不换成默认贴图，而是把真实图像清成默认值（图之外的代码也会直接采样它）
+    bool materializeIfUnwritten = false;
 };
 
 struct Barrier {
@@ -87,6 +89,8 @@ struct CompiledPass {
     std::vector<Barrier> barriers;       // 执行前要插入的 barrier
     std::vector<uint32_t> substituted;   // 这些资源没有内容，读时换成默认贴图
     std::vector<LoadOp> loadOps;         // 与 accesses 一一对应的「实际」load op
+    std::vector<Barrier> clearBarriers;  // materializeIfUnwritten：执行前先清屏（目标 TRANSFER_DST）
+    std::vector<uint32_t> clears;
 };
 
 struct CompileResult {
@@ -116,6 +120,9 @@ struct TextureDesc {
     uint32_t height = 0;
     Fallback fallback = Fallback::Black;
     VkClearValue clear{};
+    // 图之外的代码也会直接采样这张图（例如编辑器视口：ImGui 用提前缓存的描述符显示它）。
+    // 这类贴图没人写时不能只在图内部换成默认贴图，而要真的清成默认值，见 compile 的「容错 1」
+    bool externalRead = false;
 };
 
 class RenderGraph;
