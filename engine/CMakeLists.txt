@@ -21,6 +21,8 @@ engine_module(core
         core/Config.cpp
         core/ImageIO.cpp
         core/Process.cpp
+        core/JobSystem.cpp
+        core/Guid.cpp
     DEPS engine_math spdlog::spdlog nlohmann_json::nlohmann_json
     PRIVATE_DEPS stb)
 # 让运行时能找到源码目录里的 config/、shaders/、assets/（热重载要改的是源码目录里的文件，
@@ -80,11 +82,23 @@ target_compile_definitions(engine_render PRIVATE
     ENGINE_DXC_FLAGS="${ENGINE_DXC_FLAGS_STR}"
     ENGINE_SHADER_MODEL="${ENGINE_SHADER_MODEL}")
 
+# ---- asset：资源层（资产数据库、烘焙、运行时加载） --------------------------------------------
+# 位于 render 之上：烘焙产物最终上传成 render 的 GpuMesh / Material；world 和 editor 通过它引用资产。
+engine_module(asset
+    SOURCES
+        asset/AssetDatabase.cpp
+        asset/AssetManager.cpp
+        asset/CookedFormats.cpp
+        asset/Cookers.cpp
+    DEPS engine_render
+    PRIVATE_DEPS meshoptimizer bc7enc)
+
 # ---- world：场景/实体 ----------------------------------------------------------------------
 engine_module(world
     SOURCES
         world/Scene.cpp
-    DEPS engine_render)
+        world/SceneDesc.cpp
+    DEPS engine_asset)
 
 # ---- debug：ImGui 面板、RenderDoc ---------------------------------------------------------
 engine_module(debug

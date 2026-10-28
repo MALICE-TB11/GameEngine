@@ -22,7 +22,7 @@
 
 ## 模块依赖（单向，禁止反向 include）
 ```
-core ← platform ← rhi ← render ← 特性模块(terrain / ocean / medium / physics …) / world / debug ← editor ← sandbox
+core ← platform ← rhi ← render ← asset ← 特性模块(terrain / ocean / medium / physics …) / world / debug ← editor ← sandbox
 math 只依赖 GLM，任何层都可用；debug 可依赖 render；editor 在最上层，引擎其他模块都不依赖它
 ```
 - 特性模块之间**不互相 include**，通过 `medium/`、`world/` 的共享接口交流。
@@ -48,6 +48,9 @@ validation layer（Debug 默认开）、所有 Vulkan 对象 debug name、Render
 - 界面文字新增汉字后运行 `python tools/update_ui_glyphs.py`（否则不在常用字表里的字显示为「?」）。
 - 编辑器面板窗口名用「图标 标题###固定ID」，新面板在 `Editor::buildDefaultLayout` 里指定停靠位置，开关放进「视图」菜单。
 - 编辑器只通过 `EditorContext` 访问引擎状态；引擎模块不得 include `editor/`。
+- 资产：源文件放 `assets/`，`.meta`（GUID）**提交 git**；烘焙缓存在 `build/cooked/`（不提交）。改了烘焙算法或格式就把 `asset::kCookerVersion` 加一。
+- 场景/玩法代码通过 `ModelHandle` + 实例号引用模型，**不要保存 `GpuMesh*` / `Material*`**（热重载后会悬空）。
+- 后台线程（Job）不碰 GPU 和场景；需要上传或修改场景时用 `JobSystem::runOnMainThread`。
 - 新增渲染 pass：在 `engine/render/passes/` 建文件（init 建管线，add 声明读写），在 `Renderer::buildGraph` 中按顺序调用；不要手写 barrier。
 - 新增材质：只写「填 SurfaceData」的部分，光照统一调用 `ShadeSurface`，介质统一调用 `medium.hlsli`。
 - 命名：类型 `PascalCase`，函数 `camelCase`，成员 `m_` 前缀，常量 `kName`，命名空间 `eng`。

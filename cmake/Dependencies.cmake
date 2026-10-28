@@ -52,7 +52,24 @@ FetchContent_Declare(doctest GIT_REPOSITORY https://github.com/doctest/doctest.g
 set(FASTGLTF_COMPILE_AS_CPP20 ON CACHE BOOL "" FORCE)
 FetchContent_Declare(fastgltf GIT_REPOSITORY https://github.com/spnda/fastgltf.git GIT_TAG v0.8.0 GIT_SHALLOW TRUE)
 
-FetchContent_MakeAvailable(glfw volk vk_bootstrap vma glm spdlog json imgui stb doctest fastgltf)
+# ---- meshoptimizer：网格优化（顶点缓存/过绘制/取数顺序）与 LOD 简化（M3.5 资源烘焙） ------------
+FetchContent_Declare(meshoptimizer GIT_REPOSITORY https://github.com/zeux/meshoptimizer.git GIT_TAG v0.22 GIT_SHALLOW TRUE)
+
+# ---- bc7enc_rdo：BC1–BC5（rgbcx.h）与 BC7（bc7enc）贴图压缩编码器，MIT/Unlicense ------------------
+# 仓库自带的 CMakeLists 会构建带 OpenMP 的命令行工具，我们只要编码器源文件：
+# SOURCE_SUBDIR 指向不存在的目录，MakeAvailable 只下载、不 add_subdirectory，下面自己建 target。
+FetchContent_Declare(bc7enc GIT_REPOSITORY https://github.com/richgel999/bc7enc_rdo.git
+    GIT_TAG b9438627eef73a1157e84201b6fa6eb2ffd6d9f0 SOURCE_SUBDIR _no_cmake)
+
+FetchContent_MakeAvailable(glfw volk vk_bootstrap vma glm spdlog json imgui stb doctest fastgltf meshoptimizer bc7enc)
+
+add_library(bc7enc STATIC
+    ${bc7enc_SOURCE_DIR}/bc7enc.cpp
+    ${bc7enc_SOURCE_DIR}/bc7decomp.cpp
+    ${bc7enc_SOURCE_DIR}/rgbcx.cpp)
+target_include_directories(bc7enc PUBLIC ${bc7enc_SOURCE_DIR})
+target_compile_options(bc7enc PRIVATE /W0 /utf-8)
+set_target_properties(bc7enc PROPERTIES FOLDER external)
 
 # volk 需要知道目标平台，才会加载 vkCreateWin32SurfaceKHR 等平台函数
 target_compile_definitions(volk PUBLIC VK_USE_PLATFORM_WIN32_KHR)

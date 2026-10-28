@@ -87,6 +87,7 @@ bool Device::init(const DeviceSettings& settings, GLFWwindow* window) {
     VkPhysicalDeviceFeatures f10{};
     f10.samplerAnisotropy = VK_TRUE; // 地形/海面斜视角贴图清晰度
     f10.fillModeNonSolid = VK_TRUE;  // 线框模式（调试地形 LOD）
+    f10.textureCompressionBC = VK_TRUE; // BC1–BC7 压缩贴图（M3.5 资源烘焙），所有桌面 GPU 都支持
 
     vkb::PhysicalDeviceSelector selector(vkbInstance);
     selector.set_surface(m_surface)

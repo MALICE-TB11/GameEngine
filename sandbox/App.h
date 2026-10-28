@@ -2,7 +2,10 @@
 // 演示程序：把各模块串起来的「胶水」。
 // 引擎模块不知道 App 的存在；App 负责创建模块、驱动主循环，界面交给 Editor。
 
+#include "asset/AssetDatabase.h"
+#include "asset/AssetManager.h"
 #include "core/Config.h"
+#include "core/JobSystem.h"
 #include "core/Time.h"
 #include "debug/ImGuiLayer.h"
 #include "debug/RenderDocCapture.h"
@@ -27,7 +30,8 @@ struct LaunchOptions {
     std::filesystem::path capturePath;  // --capture file.png：退出前截最后一帧
     std::optional<bool> validation;     // --validation / --no-validation，覆盖默认值
     std::optional<bool> renderdoc;      // --renderdoc / --no-renderdoc，覆盖 config
-    std::string model;                  // --model path.glb：替换 config 里的演示模型
+    std::string model;                  // --model path.glb：额外放入一个模型
+    std::string scene;                  // --scene scenes/x.scene.json：打开指定场景
     bool hideUI = false;                // --no-ui：以游戏模式启动（场景全屏，F1 切回编辑器）
     std::string select;                 // --select 名字：启动时选中该实体（截图/演示用）
 };
@@ -37,9 +41,7 @@ struct DebugSettings {
 };
 
 struct SceneSettings {
-    std::string model = "assets/models/ruins.glb"; // 工程相对路径或绝对路径
-    vec3 modelPosition{0.0f, 0.0f, -3.0f};
-    float modelScale = 1.0f;
+    std::string file = "scenes/demo.scene.json"; // 启动时打开的场景
     float spinSpeedDeg = 45.0f;
 };
 
@@ -53,7 +55,10 @@ private:
     void shutdown();
     void loadSettings();
     void saveSettings();
-    void createScene();
+    bool openScene(const std::filesystem::path& projectRelative);
+    void saveScene();
+    void createDemoScene();
+    void waitForModel(ModelHandle h);
     void fixedUpdate(double dt);
     void updateCamera(double dt);
 
@@ -69,8 +74,11 @@ private:
 
     Window m_window;
     Input m_input;
+    JobSystem m_jobs;
     rhi::Device m_device;
     Renderer m_renderer;
+    asset::AssetDatabase m_assetDb;
+    asset::AssetManager m_assets;
     ImGuiLayer m_imgui;
     RenderDocCapture m_renderdoc;
     Editor m_editor;
@@ -81,7 +89,7 @@ private:
     double m_simTime = 0.0;
 
     Scene m_scene;
-    EntityId m_spinner = 0; // 按固定步长旋转的立方体（演示渲染插值）
+    std::filesystem::path m_scenePath;
     DrawList m_drawList;
     RenderView m_view;
 };

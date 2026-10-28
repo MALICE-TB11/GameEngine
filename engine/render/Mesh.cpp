@@ -2,6 +2,7 @@
 
 #include "rhi/Upload.h"
 
+#include <algorithm>
 #include <cstddef>
 
 namespace eng {
@@ -9,7 +10,9 @@ namespace eng {
 GpuMesh uploadMesh(rhi::Device& device, const MeshData& data, const std::string& name) {
     GpuMesh m;
     m.name = name;
-    m.indexCount = static_cast<uint32_t>(data.indices.size());
+    m.lods = data.lods;
+    if (m.lods.empty()) m.lods.push_back({0, static_cast<uint32_t>(data.indices.size()), 0.0f});
+    m.indexCount = m.lods[0].indexCount;
     for (const Vertex& v : data.vertices) m.bounds.expand(v.position);
     m.vertexBuffer = rhi::createBufferWithData(device, data.vertices.data(), data.vertices.size() * sizeof(Vertex),
                                                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, (name + "_VB").c_str());
@@ -24,11 +27,12 @@ void destroyMesh(rhi::Device& device, GpuMesh& mesh) {
     mesh.indexCount = 0;
 }
 
-void drawMesh(VkCommandBuffer cmd, const GpuMesh& mesh) {
+void drawMesh(VkCommandBuffer cmd, const GpuMesh& mesh, uint32_t lod) {
+    const MeshLod& l = mesh.lods[std::min<size_t>(lod, mesh.lods.size() - 1)];
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer.buffer, &offset);
     vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-    vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+    vkCmdDrawIndexed(cmd, l.indexCount, 1, l.firstIndex, 0, 0);
 }
 
 void setMeshVertexInput(rhi::GraphicsState& s) {

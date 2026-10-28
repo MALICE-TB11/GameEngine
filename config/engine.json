@@ -60,16 +60,11 @@
       1.0
     ],
     "debugView": 0,
+    "lodThresholdPx": 1.0,
     "vsync": true
   },
   "scene": {
-    "model": "assets/models/ruins.glb",
-    "modelPosition": [
-      0.0,
-      0.0,
-      -3.0
-    ],
-    "modelScale": 1.0,
+    "file": "scenes/demo.scene.json",
     "spinSpeedDeg": 45.0
   },
   "window": {

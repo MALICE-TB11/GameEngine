@@ -46,6 +46,8 @@ struct EditorContext {
     rhi::Device* device = nullptr;
     Renderer* renderer = nullptr;
     Scene* scene = nullptr;
+    asset::AssetManager* assets = nullptr;
+    std::filesystem::path* scenePath = nullptr; // 当前场景文件（工程相对路径）
     FlyCamera* camera = nullptr;
     FixedStepLoop* loop = nullptr;
     RenderDocCapture* renderdoc = nullptr;
@@ -59,6 +61,9 @@ struct EditorContext {
     std::function<void()> saveConfig;
     std::function<void()> reloadConfig;
     std::function<void()> requestQuit;
+    std::function<void()> saveScene;                                   // 保存到 *scenePath
+    std::function<void(const std::filesystem::path&)> openScene;       // 打开并设为当前场景
+    std::function<void()> newScene;
     std::function<void()> projectSettingsExtra; // 应用自己的参数（显示在「项目设置」末尾）
 };
 
@@ -81,6 +86,10 @@ public:
     float highlightStrength(double timeSeconds) const;
     // 按实体名选中（--select 命令行参数用，便于截图/演示）
     void selectByName(const std::string& name);
+    // 拖进窗口的文件：导入资产数据库，模型直接放进场景
+    void onFilesDropped(const std::vector<std::filesystem::path>& files);
+    // 场景被整体替换（打开/新建）后调用：清掉指向旧实体的选择
+    void onSceneReplaced();
 
 private:
     // ---- 外壳 ----
@@ -103,11 +112,22 @@ private:
     void drawEnvironmentPanel();
     void drawRenderSettingsPanel();
     void drawProjectSettingsPanel();
+    void drawSaveSceneAsPopup();
     // ---- 操作 ----
     void pickAt(const ImVec2& uv);
     void focusSelection();
     void takeScreenshot();
     void applyRendererSettings();
+    void deleteSelection();
+    // 在相机前方放置一个模型的全部实例，并选中第一个（模型加载完成后才真正放入）
+    void placeModelInFront(ModelHandle model, const std::string& name);
+    void processPendingPlacements();
+    struct PendingPlacement {
+        ModelHandle model;
+        Transform transform;
+        std::string name;
+    };
+    std::vector<PendingPlacement> m_pendingPlacements;
 
     EditorContext m_ctx;
     FrameStats m_stats;
@@ -134,6 +154,8 @@ private:
     Material* m_selectedMaterial = nullptr; // 资源浏览器里选中的材质（检视器显示它）
     bool m_scrollOutlinerToSelection = false; // 在视口里点选后，大纲滚动到该实体
     char m_outlinerFilter[64] = {};
+    bool m_openSaveAs = false;
+    char m_saveAsName[64] = "my_scene";
 };
 
 } // namespace eng

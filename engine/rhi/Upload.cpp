@@ -85,4 +85,47 @@ Image createTexture2D(Device& device, const void* rgba8, uint32_t width, uint32_
     return image;
 }
 
+Image createTextureFromMips(Device& device, VkFormat format, uint32_t width, uint32_t height,
+                            const std::vector<std::vector<uint8_t>>& mips, const char* name) {
+    ImageDesc desc;
+    desc.width = width;
+    desc.height = height;
+    desc.format = format;
+    desc.mipLevels = static_cast<uint32_t>(mips.size());
+    desc.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    desc.name = name;
+    Image image = createImage(device, desc);
+
+    // 所有 mip 拼进一个 staging 缓冲，一次提交拷完
+    VkDeviceSize total = 0;
+    for (const auto& m : mips) total += m.size();
+    Buffer staging = createBuffer(device, total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryUsage::Upload, "MipStaging");
+    std::vector<VkBufferImageCopy> regions;
+    VkDeviceSize offset = 0;
+    for (uint32_t m = 0; m < mips.size(); ++m) {
+        std::memcpy(static_cast<uint8_t*>(staging.mapped) + offset, mips[m].data(), mips[m].size());
+        VkBufferImageCopy r{};
+        r.bufferOffset = offset;
+        r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, m, 0, 1};
+        // 图像尺寸写真实的 mip 尺寸（可以小于 4×4 的压缩块），驱动按块对齐读取缓冲
+        r.imageExtent = {std::max(1u, width >> m), std::max(1u, height >> m), 1};
+        regions.push_back(r);
+        offset += mips[m].size();
+    }
+    vmaFlushAllocation(device.allocator(), staging.allocation, 0, VK_WHOLE_SIZE);
+
+    device.immediateSubmit([&](VkCommandBuffer cmd) {
+        const ImageState undefined{VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE, VK_IMAGE_LAYOUT_UNDEFINED};
+        const ImageState dst{VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL};
+        const ImageState shaderRead{VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        imageBarrier(cmd, image.image, VK_IMAGE_ASPECT_COLOR_BIT, undefined, dst);
+        vkCmdCopyBufferToImage(cmd, staging.buffer, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                               static_cast<uint32_t>(regions.size()), regions.data());
+        imageBarrier(cmd, image.image, VK_IMAGE_ASPECT_COLOR_BIT, dst, shaderRead);
+    });
+    destroyBuffer(device, staging);
+    return image;
+}
+
 } // namespace eng::rhi

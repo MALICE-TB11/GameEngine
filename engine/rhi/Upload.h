@@ -5,6 +5,8 @@
 
 #include "rhi/Resources.h"
 
+#include <vector>
+
 namespace eng::rhi {
 
 class Device;
@@ -16,5 +18,10 @@ Buffer createBufferWithData(Device& device, const void* data, VkDeviceSize size,
 // 返回的贴图处于 SHADER_READ_ONLY_OPTIMAL 布局。
 Image createTexture2D(Device& device, const void* rgba8, uint32_t width, uint32_t height, VkFormat format,
                       bool generateMips, const char* name);
+
+// 上传预先生成好的整条 mip 链（资源烘焙的产物，通常是 BC 压缩格式）。
+// 压缩格式不能用 blit 生成 mip（GPU 不会「压缩」），所以 mip 必须离线算好；mips[i] 是第 i 级的全部字节。
+Image createTextureFromMips(Device& device, VkFormat format, uint32_t width, uint32_t height,
+                            const std::vector<std::vector<uint8_t>>& mips, const char* name);
 
 } // namespace eng::rhi

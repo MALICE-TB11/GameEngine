@@ -53,6 +53,14 @@ TEST_CASE("配置：保存后再读回一致，glm 向量序列化为数组") {
     CHECK(r.color.z == doctest::Approx(0.3f));
 }
 
+TEST_CASE("配置：float 按 7 位有效数字写出，没有 double 转换噪声") {
+    nlohmann::json j = 0.42f;
+    CHECK(j.dump() == "0.42");
+    nlohmann::json v = glm::vec3(0.1f, 0.2f, 0.3f);
+    CHECK(v.dump() == "[0.1,0.2,0.3]");
+    CHECK(j.get<float>() == 0.42f);
+}
+
 TEST_CASE("配置：类型错误的节使用默认值而不是崩溃") {
     const auto path = tempFile("eng_test_cfg4.json");
     eng::fs::writeText(path, R"({ "s": { "count": "not a number" } })");

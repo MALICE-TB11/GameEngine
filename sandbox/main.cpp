@@ -5,7 +5,8 @@
 //   sandbox.exe --frames 60 --capture out.png   额外保存最后一帧截图
 //   sandbox.exe --validation / --no-validation  强制开/关 validation layer
 //   sandbox.exe --renderdoc / --no-renderdoc    强制加载/不加载 RenderDoc（冒烟测试默认不加载）
-//   sandbox.exe --model path/to/model.glb       加载指定 glTF 模型代替演示遗迹
+//   sandbox.exe --model path/to/model.glb       额外放入一个 glTF 模型（外部文件只做临时登记）
+//   sandbox.exe --scene scenes/x.scene.json     打开指定场景（默认见 config: scene.file）
 //   sandbox.exe --no-ui                         以游戏模式启动：场景全屏、隐藏编辑器（F1 切换）
 //   sandbox.exe --select ruins/Pillar_R         启动时选中某个实体（检视器显示它）
 
@@ -35,6 +36,8 @@ int main(int argc, char** argv) {
             opts.hideUI = true;
         } else if (arg == "--select" && i + 1 < argc) {
             opts.select = argv[++i];
+        } else if (arg == "--scene" && i + 1 < argc) {
+            opts.scene = argv[++i];
         } else if (arg == "--model" && i + 1 < argc) {
             opts.model = argv[++i];
         } else if (arg == "--renderdoc") {

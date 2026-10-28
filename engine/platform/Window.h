@@ -6,7 +6,9 @@
 
 #include "math/MathTypes.h"
 
+#include <filesystem>
 #include <string>
+#include <vector>
 
 struct GLFWwindow;
 
@@ -40,14 +42,18 @@ public:
     GLFWwindow* handle() const { return m_window; }
     // 滚轮在本帧的累计量（GLFW 只提供回调，所以存在窗口这里，由 Input 读取）
     float consumeScroll();
+    // 拖进窗口的文件（读取后清空）
+    std::vector<std::filesystem::path> consumeDroppedFiles();
 
 private:
     GLFWwindow* m_window = nullptr;
     bool m_resized = false;
     float m_scroll = 0.0f;
+    std::vector<std::filesystem::path> m_dropped;
 
     static void onFramebufferSize(GLFWwindow* w, int width, int height);
     static void onScroll(GLFWwindow* w, double dx, double dy);
+    static void onDrop(GLFWwindow* w, int count, const char** paths);
 };
 
 } // namespace eng

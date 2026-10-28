@@ -1,0 +1,11 @@
+{
+  "guid": "ab8a5a8d99bb362023e249519fac2cb2",
+  "settings": {
+    "compressTextures": true,
+    "lodMaxError": 0.02,
+    "lodReduction": 0.5,
+    "maxLods": 4,
+    "optimize": true
+  },
+  "type": "model"
+}

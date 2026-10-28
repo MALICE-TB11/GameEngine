@@ -38,25 +38,22 @@ void splitName(const std::string& full, std::string& group, std::string& leaf) {
     }
 }
 
-// 材质编辑器：检视器（选中实体的材质）和资源浏览器（选中材质）共用
-void drawMaterialEditor(Material& m) {
-    MaterialParams& p = m.params;
-    ImGui::PushID(&m);
-    ImGui::TextColored(theme::kAccentBright, "%s", m.name.c_str());
-    ImGui::SameLine();
-    ImGui::TextDisabled(m.shadingModel() == ShadingModel::Toon ? "· Toon" : "· PBR");
-    ImGui::ColorEdit4("基础色", &p.baseColor.x, ImGuiColorEditFlags_Float);
-    ImGui::SliderFloat("金属度", &p.pbr.x, 0.0f, 1.0f);
-    ImGui::SliderFloat("粗糙度", &p.pbr.y, 0.0f, 1.0f);
+// 材质参数编辑（实体覆盖和资产材质共用），返回是否有改动
+bool drawMaterialParams(MaterialParams& p) {
+    bool c = false;
+    c |= ImGui::ColorEdit4("基础色", &p.baseColor.x, ImGuiColorEditFlags_Float);
+    c |= ImGui::SliderFloat("金属度", &p.pbr.x, 0.0f, 1.0f);
+    c |= ImGui::SliderFloat("粗糙度", &p.pbr.y, 0.0f, 1.0f);
     theme::helpMarker("感知粗糙度。BRDF 内部使用 α = 粗糙度²，让滑条在视觉上更线性。");
-    ImGui::SliderFloat("AO 强度", &p.pbr.z, 0.0f, 1.0f);
-    ImGui::SliderFloat("法线强度", &p.emissive.w, 0.0f, 3.0f);
-    ImGui::ColorEdit3("自发光", &p.emissive.x, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
-    ImGui::SliderFloat("自发光倍数", &p.flags.y, 0.0f, 20.0f);
-    ImGui::Checkbox("双面", &m.doubleSided);
-    theme::helpMarker("关闭背面剔除，背面法线翻转。用于树叶、布料、薄片。");
+    c |= ImGui::SliderFloat("AO 强度", &p.pbr.z, 0.0f, 1.0f);
+    c |= ImGui::SliderFloat("法线强度", &p.emissive.w, 0.0f, 3.0f);
+    c |= ImGui::ColorEdit3("自发光", &p.emissive.x, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
+    c |= ImGui::SliderFloat("自发光倍数", &p.flags.y, 0.0f, 20.0f);
+    return c;
+}
 
-    // 贴图槽位：有贴图 ✔，没有则显示用的是哪张默认贴图
+// 贴图槽位：有贴图 ✔，没有则显示用的是哪张默认贴图
+void drawTextureSlots(const Material& m) {
     if (ImGui::BeginTable("##tex", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
         auto row = [](const char* slot, bool has, const char* fallback) {
             ImGui::TableNextRow();
@@ -75,7 +72,19 @@ void drawMaterialEditor(Material& m) {
         row("自发光", m.emissiveTex, "白 × 参数");
         ImGui::EndTable();
     }
-    ImGui::TextDisabled("参数走 push constant：拖动即时生效");
+}
+
+// 资产材质编辑器（资源浏览器里选中的材质）：修改的是内存中的资产，影响所有使用它的实体
+void drawMaterialEditor(Material& m) {
+    ImGui::PushID(&m);
+    ImGui::TextColored(theme::kAccentBright, "%s", m.name.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled(m.shadingModel() == ShadingModel::Toon ? "· Toon" : "· PBR");
+    drawMaterialParams(m.params);
+    ImGui::Checkbox("双面", &m.doubleSided);
+    theme::helpMarker("关闭背面剔除，背面法线翻转。用于树叶、布料、薄片。");
+    drawTextureSlots(m);
+    ImGui::TextColored(theme::kWarn, "运行时修改，影响所有使用该材质的实体，不写回资产文件");
     ImGui::PopID();
 }
 
@@ -185,13 +194,24 @@ void Editor::drawOutliner() {
             const bool selected = m_selection && *m_selection == id;
             if (selected) ImGui::PushStyleColor(ImGuiCol_Text, theme::kSelection);
             else if (!e.visible) ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextDim);
-            const std::string label = std::string(e.material ? "◆ " : "◇ ") + leaf;
+            // 图标表示资产状态：◆ 就绪  ◌ 加载中  ✖ 失败（显示兜底立方体）
+            const asset::AssetStatus st = m_ctx.assets->status(e.model);
+            const char* icon = st == asset::AssetStatus::Ready ? "◆ " : st == asset::AssetStatus::Loading ? "◌ " : "✖ ";
+            const std::string label = icon + leaf;
             if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_AllowOverlap | ImGuiSelectableFlags_AllowDoubleClick)) {
                 m_selection = id;
                 m_selectedMaterial = nullptr;
                 if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) focusSelection();
             }
             if (selected || !e.visible) ImGui::PopStyleColor();
+            bool deleteThis = false;
+            if (ImGui::BeginPopupContextItem("##ctx")) {
+                m_selection = id;
+                if (ImGui::MenuItem("聚焦", "F")) focusSelection();
+                if (ImGui::MenuItem(e.visible ? "隐藏" : "显示")) e.visible = !e.visible;
+                if (ImGui::MenuItem("删除", "Delete")) deleteThis = true;
+                ImGui::EndPopup();
+            }
             if (selected && m_scrollOutlinerToSelection) {
                 ImGui::SetScrollHereY(0.5f);
                 m_scrollOutlinerToSelection = false;
@@ -203,6 +223,14 @@ void Editor::drawOutliner() {
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip(e.visible ? "隐藏" : "显示");
             ImGui::PopID();
+            if (deleteThis) {
+                // 删除会改变后面实体的下标：本帧剩下的列表已经失效，直接结束绘制
+                deleteSelection();
+                ImGui::TreePop();
+                ImGui::EndChild();
+                ImGui::End();
+                return;
+            }
         }
         ImGui::TreePop();
     }
@@ -219,13 +247,76 @@ void Editor::drawAssetBrowser() {
         ImGui::End();
         return;
     }
+    asset::AssetManager& assets = *m_ctx.assets;
+    asset::AssetDatabase& db = assets.database();
     if (ImGui::BeginTabBar("##assets_tabs")) {
+        if (ImGui::BeginTabItem("模型")) {
+            ImGui::TextDisabled("把 .glb / .gltf / .png 拖进窗口即可导入");
+            if (ImGui::BeginTable("##models", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("ops", ImGuiTableColumnFlags_WidthFixed, 64);
+                auto row = [&](const std::string& label, const std::string& tooltip, std::optional<Guid> guid, ModelHandle loaded) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImVec4 col = theme::kTextDim;
+                    const char* icon = "○ "; // 未加载
+                    if (loaded.valid()) {
+                        const auto st = assets.status(loaded);
+                        icon = st == asset::AssetStatus::Ready ? "◆ " : st == asset::AssetStatus::Loading ? "◌ " : "✖ ";
+                        col = st == asset::AssetStatus::Ready ? theme::kOk : st == asset::AssetStatus::Loading ? theme::kWarn : theme::kError;
+                    }
+                    ImGui::TextColored(col, "%s", icon);
+                    ImGui::SameLine(0, 2);
+                    ImGui::TextUnformatted(label.c_str());
+                    if (ImGui::IsItemHovered() && !tooltip.empty()) ImGui::SetTooltip("%s", tooltip.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::PushID(label.c_str());
+                    if (ImGui::SmallButton("放入")) {
+                        const ModelHandle h = loaded.valid() ? loaded : assets.loadModel(*guid);
+                        std::string stem = std::filesystem::path(label).stem().string();
+                        placeModelInFront(h, stem);
+                    }
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("放到相机前方 6 米处");
+                    if (guid && loaded.valid() && !assets.loaded()[loaded.index].builtin) {
+                        ImGui::SameLine(0, 2);
+                        if (ImGui::SmallButton("↻")) {
+                            // 强制重新烘焙：删掉缓存再加载（例如修改了烘焙器代码之后）
+                            std::error_code ec;
+                            std::filesystem::remove(db.cookedPath(*guid), ec);
+                            assets.reload(loaded);
+                        }
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("重新导入（删除缓存并重新烘焙）");
+                    }
+                    ImGui::PopID();
+                };
+                // 内置几何体
+                for (const auto& info : assets.loaded())
+                    if (info.builtin) row(info.name, "内置程序化模型", info.guid, info.handle);
+                // 资产数据库里的模型
+                for (const auto& rec : db.records()) {
+                    if (rec.type != asset::AssetType::Model) continue;
+                    ModelHandle loaded;
+                    for (const auto& info : assets.loaded())
+                        if (info.guid == rec.guid) loaded = info.handle;
+                    std::string tip = "GUID " + rec.guid.toString();
+                    if (loaded.valid() && !assets.error(loaded).empty()) tip += "\n错误: " + assets.error(loaded);
+                    if (!loaded.valid()) tip += db.isStale(rec.guid) ? "\n未烘焙（第一次放入时在后台烘焙）" : "\n已烘焙";
+                    row(rec.displayName, tip, rec.guid, loaded);
+                }
+                ImGui::EndTable();
+            }
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem("材质")) {
-            // 色块网格：每格一个材质，点击后在检视器中编辑
+            // 色块网格：已加载模型的材质，点击后在检视器中编辑
+            std::vector<Material*> materials;
+            for (const auto& info : assets.loaded())
+                if (Model* model = assets.mutableModel(info.handle); model && info.status == asset::AssetStatus::Ready)
+                    for (Material& m : model->materials) materials.push_back(&m);
             const float cell = 64.0f;
             const int columns = std::max(1, int(ImGui::GetContentRegionAvail().x / (cell + 8.0f)));
             int i = 0;
-            for (Material* m : m_ctx.scene->materials()) {
+            for (Material* m : materials) {
                 ImGui::PushID(m);
                 if (i % columns != 0) ImGui::SameLine();
                 ImGui::BeginGroup();
@@ -262,17 +353,32 @@ void Editor::drawAssetBrowser() {
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("网格")) {
-            std::set<const GpuMesh*> seen;
+            // 每个网格的 LOD 链：三角形数逐级减少
             if (ImGui::BeginTable("##meshes", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-                for (const Entity& e : m_ctx.scene->entities()) {
-                    if (!e.mesh || !seen.insert(e.mesh).second) continue;
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(e.mesh->name.c_str());
-                    ImGui::TableNextColumn();
-                    ImGui::TextDisabled("%u 三角形", e.mesh->indexCount / 3);
+                for (const auto& info : assets.loaded()) {
+                    if (info.status != asset::AssetStatus::Ready) continue;
+                    for (const GpuMesh& mesh : assets.model(info.handle).meshes) {
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::TextUnformatted(mesh.name.c_str());
+                        ImGui::TableNextColumn();
+                        std::string lods;
+                        for (const MeshLod& l : mesh.lods) lods += (lods.empty() ? "" : " → ") + std::to_string(l.indexCount / 3);
+                        ImGui::TextDisabled("△ %s", lods.c_str());
+                    }
                 }
                 ImGui::EndTable();
+            }
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("贴图")) {
+            ImGui::TextDisabled("独立贴图资产（地形、天气等将使用），导入时压缩为 BC7/BC5");
+            for (const auto& rec : db.records()) {
+                if (rec.type != asset::AssetType::Texture) continue;
+                ImGui::BulletText("%s", rec.displayName.c_str());
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s · %s", rec.settings.value("usage", std::string("color")).c_str(),
+                                    db.isStale(rec.guid) ? "未烘焙" : "已烘焙");
             }
             ImGui::EndTabItem();
         }
@@ -348,18 +454,39 @@ void Editor::drawEntityInspector(Entity& e, EntityId id) {
         e.previous = t;
     }
 
-    if (e.mesh) {
-        theme::sectionHeader("网格");
-        const vec3 size = e.mesh->bounds.max - e.mesh->bounds.min;
-        ImGui::Text("%s", e.mesh->name.c_str());
-        ImGui::TextDisabled("%u 个三角形 · 包围盒 %.2f × %.2f × %.2f 米", e.mesh->indexCount / 3, size.x, size.y, size.z);
+    theme::sectionHeader("模型");
+    const asset::AssetStatus st = m_ctx.assets->status(e.model);
+    ImGui::Text("%s", m_ctx.assets->name(e.model).c_str());
+    ImGui::SameLine();
+    ImGui::TextColored(st == asset::AssetStatus::Ready ? theme::kOk : st == asset::AssetStatus::Loading ? theme::kWarn : theme::kError,
+                       st == asset::AssetStatus::Ready ? "就绪" : st == asset::AssetStatus::Loading ? "加载中" : "失败");
+    if (!m_ctx.assets->error(e.model).empty()) ImGui::TextWrapped("%s", m_ctx.assets->error(e.model).c_str());
+    ImGui::TextDisabled("实例 #%u · GUID %s", e.instance, m_ctx.assets->guid(e.model).toString().substr(0, 8).c_str());
+    if (const GpuMesh* mesh = m_ctx.scene->mesh(id)) {
+        const vec3 size = mesh->bounds.max - mesh->bounds.min;
+        ImGui::TextDisabled("包围盒 %.2f × %.2f × %.2f 米", size.x, size.y, size.z);
+        std::string lods;
+        for (const MeshLod& l : mesh->lods) lods += (lods.empty() ? "" : " → ") + std::to_string(l.indexCount / 3);
+        ImGui::TextDisabled("LOD 三角形 %s", lods.c_str());
+        theme::helpMarker("渲染时把每级 LOD 的几何误差投影到屏幕上，选误差小于 1 像素的最粗一级。\n远离物体时三角形数会自动减少。");
     }
 
     theme::sectionHeader("材质");
-    if (e.material)
-        drawMaterialEditor(*e.material);
-    else
-        ImGui::TextDisabled("默认材质（只读）");
+    const Material* mat = m_ctx.scene->material(id);
+    if (mat) {
+        ImGui::TextColored(theme::kAccentBright, "%s", mat->name.c_str());
+        drawTextureSlots(*mat);
+    }
+    // 参数编辑写入「实体覆盖」：只改这一个实体，资产本身和其他实体不受影响；保存场景时一起保存
+    MaterialParams params = e.materialOverride ? *e.materialOverride : (mat ? mat->params : MaterialParams{});
+    if (drawMaterialParams(params)) e.materialOverride = params;
+    if (e.materialOverride) {
+        ImGui::TextColored(theme::kWarn, "● 已覆盖（只影响这个实体）");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("恢复资产材质")) e.materialOverride.reset();
+    } else {
+        ImGui::TextDisabled("使用资产材质；修改参数会为这个实体创建覆盖");
+    }
 }
 
 // =====================================================================================
@@ -450,6 +577,9 @@ void Editor::drawRenderSettingsPanel() {
     c |= ImGui::Checkbox("垂直同步", &rs.vsync);
     const VkExtent2D se = m_ctx.renderer->sceneExtent();
     ImGui::TextDisabled("场景分辨率 %u × %u（跟随视口面板大小）", se.width, se.height);
+    c |= ImGui::SliderFloat("LOD 误差阈值", &rs.lodThresholdPx, 0.25f, 16.0f, "%.2f 像素", ImGuiSliderFlags_Logarithmic);
+    theme::helpMarker("简化误差投影到屏幕上小于这个像素数时，就使用更粗的 LOD。\n调大可以直观看到远处物体切换 LOD（配合线框模式）。");
+    ImGui::TextDisabled("本帧绘制 %.1fk 个三角形", double(m_ctx.scene->lastTriangleCount()) / 1000.0);
 
     theme::sectionHeader("视图模式");
     for (int i = 0; i < IM_ARRAYSIZE(kDebugViewNames); ++i) {

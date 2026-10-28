@@ -20,15 +20,40 @@
 #include <glm/gtc/quaternion.hpp>
 #include <nlohmann/json.hpp>
 
+#include <cstdio>
+#include <cstdlib>
 #include <string>
+#include <type_traits>
+
+// ---- float 的 JSON 序列化：按 float 的有效位数（7 位）输出 -----------------------------------
+// 默认会先转成 double 再打印 17 位，0.42f 会变成 0.41999998688697815 —— 配置和场景文件要给人读、
+// 要进 git 做 diff，这种噪声没有任何信息量。
+namespace eng::detail {
+inline double floatForJson(float v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.7g", double(v));
+    return std::strtod(buf, nullptr);
+}
+} // namespace eng::detail
+
+namespace nlohmann {
+template <>
+struct adl_serializer<float> {
+    static void to_json(json& j, float v) { j = eng::detail::floatForJson(v); }
+    static void from_json(const json& j, float& v) { v = static_cast<float>(j.get<double>()); }
+};
 
 // ---- GLM 类型的 JSON 序列化：向量写成数组 [x, y, z] ----------------------------------------
-namespace nlohmann {
 template <glm::length_t L, typename T, glm::qualifier Q>
 struct adl_serializer<glm::vec<L, T, Q>> {
     static void to_json(json& j, const glm::vec<L, T, Q>& v) {
         j = json::array();
-        for (glm::length_t i = 0; i < L; ++i) j.push_back(v[i]);
+        for (glm::length_t i = 0; i < L; ++i) {
+            if constexpr (std::is_same_v<T, float>)
+                j.push_back(eng::detail::floatForJson(v[i]));
+            else
+                j.push_back(v[i]);
+        }
     }
     static void from_json(const json& j, glm::vec<L, T, Q>& v) {
         for (glm::length_t i = 0; i < L && i < static_cast<glm::length_t>(j.size()); ++i) v[i] = j[i].get<T>();

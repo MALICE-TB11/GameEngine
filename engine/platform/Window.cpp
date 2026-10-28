@@ -4,6 +4,8 @@
 
 #include <GLFW/glfw3.h>
 
+#include <utility>
+
 namespace eng {
 
 bool Window::create(const WindowSettings& settings) {
@@ -25,6 +27,7 @@ bool Window::create(const WindowSettings& settings) {
     glfwSetFramebufferSizeCallback(m_window, &Window::onFramebufferSize);
     // 注意：必须在 ImGui_ImplGlfw_InitForVulkan 之前设置回调，ImGui 会把我们的回调「串」在它后面
     glfwSetScrollCallback(m_window, &Window::onScroll);
+    glfwSetDropCallback(m_window, &Window::onDrop);
     return true;
 }
 
@@ -80,6 +83,17 @@ float Window::consumeScroll() {
     const float s = m_scroll;
     m_scroll = 0.0f;
     return s;
+}
+
+std::vector<std::filesystem::path> Window::consumeDroppedFiles() {
+    return std::exchange(m_dropped, {});
+}
+
+void Window::onDrop(GLFWwindow* w, int count, const char** paths) {
+    auto* self = static_cast<Window*>(glfwGetWindowUserPointer(w));
+    // GLFW 给的是 UTF-8 路径；用 u8path 语义构造，中文路径才不会乱码
+    for (int i = 0; i < count; ++i)
+        self->m_dropped.emplace_back(std::u8string(reinterpret_cast<const char8_t*>(paths[i])));
 }
 
 void Window::onFramebufferSize(GLFWwindow* w, int, int) {

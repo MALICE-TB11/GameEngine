@@ -28,7 +28,11 @@ SurfaceData BuildSurface(MeshVSOut i, bool frontFace)
     if (!frontFace)
         n = -n; // 双面材质的背面：法线朝向观察者
     s.geometricNormal = n;
-    float3 tn = gNormalTex.Sample(gLinearWrap, i.uv).xyz * 2.0 - 1.0;
+    // 法线贴图只用 XY，Z 由单位长度重建：z = sqrt(1 - x² - y²)。
+    // 这样烘焙时可以用只存两个通道的 BC5（精度比把三个通道塞进 BC7 高，体积也相同），
+    // 未压缩的 RGBA8 法线贴图和默认平坦法线（0.5, 0.5, 1）同样适用。
+    float2 nxy = gNormalTex.Sample(gLinearWrap, i.uv).xy * 2.0 - 1.0;
+    float3 tn = float3(nxy, sqrt(saturate(1.0 - dot(nxy, nxy))));
     s.normal = ApplyNormalMap(n, i.tangent, tn, p.emissive.w);
 
     float4 base = gBaseColorTex.Sample(gLinearWrap, i.uv) * p.baseColor;

@@ -38,7 +38,8 @@
 | `--capture out.png` | 保存最后一帧截图 |
 | `--validation` / `--no-validation` | 强制开/关 validation layer（Debug 默认开） |
 | `--renderdoc` / `--no-renderdoc` | 强制加载/不加载 RenderDoc（F12 捕获） |
-| `--model path.glb` | 加载指定 glTF 模型代替演示遗迹 |
+| `--scene scenes/x.scene.json` | 打开指定场景（默认 `scenes/demo.scene.json`） |
+| `--model path.glb` | 额外放入一个 glTF 模型（外部文件只做临时登记，不复制进工程） |
 | `--no-ui` | 以游戏模式启动：场景全屏、隐藏编辑器（运行中按 F1 切换） |
 | `--select 名字` | 启动时选中某个实体，例如 `--select ruins/Pillar_R` |
 
@@ -49,20 +50,23 @@
 
 重新生成测试模型：`python tools/make_test_assets.py`（输出 `assets/models/ruins.glb`，已提交到仓库）。
 
+**资产**：把 `.glb / .gltf / .png` 放进 `assets/`（或直接拖进编辑器窗口），启动时自动生成 `.meta`（GUID + 导入设置，请一起提交），首次使用时在后台烘焙到 `build/cooked/`（网格优化 + LOD、贴图 BC7/BC5 压缩）。场景保存在 `scenes/*.scene.json`。详见 [docs/04-资源层.md](docs/04-资源层.md)。
+
 ## 模块地图
 
 ```
-math ← core ← platform ← rhi ← render ← world / debug / 特性模块(terrain / ocean / medium / physics) ← editor ← sandbox
+math ← core ← platform ← rhi ← render ← asset ← world / debug / 特性模块(terrain / ocean / medium / physics) ← editor ← sandbox
 ```
 
 | 目录 | 职责 | 里程碑 |
 |---|---|---|
-| `engine/core` | 日志、断言、文件监视、JSON 配置、固定步长、图片读写、进程调用 | M1–M2 |
+| `engine/core` | 日志、断言、文件监视、JSON 配置、固定步长、图片读写、进程调用、Job 系统、GUID、二进制读写 | M1–M3.5 |
+| `engine/asset` | 资源层：资产数据库（GUID/.meta）、烘焙（LOD、BC 压缩）、句柄与后台加载、热重载 | M3.5 |
 | `engine/platform` | 窗口、输入 | M1 |
 | `engine/math` | GLM 之上的小工具：变换、反向 Z 投影 | M1 |
 | `engine/rhi` | Vulkan 薄封装：设备、交换链、资源、上传、描述符、管线、GPU 计时 | M1–M2 |
 | `engine/render` | Render Graph、Renderer、管线缓存与热重载、相机、网格、材质、glTF、各 pass | M2–M3 |
-| `engine/world` | 场景/实体（固定步长 + 插值） | M3 |
+| `engine/world` | 场景/实体（固定步长 + 插值）、LOD 选择、场景文件读写 | M3–M3.5 |
 | `engine/debug` | ImGui 初始化与字体、日志/性能/Render Graph/Shader 面板、RenderDoc | M1–M2 |
 | `engine/editor` | 编辑器外壳：菜单、工具栏、状态栏、停靠布局、视口点选、大纲、检视器、环境光照 | M3 后 |
 | `engine/terrain` | 高度图地形、地形材质 | M4 |
@@ -93,6 +97,7 @@ math ← core ← platform ← rhi ← render ← world / debug / 特性模块(t
 13. [engine/render/GltfLoader.cpp](engine/render/GltfLoader.cpp) —— 模型加载
 14. [docs/03-网格与PBR.md](docs/03-网格与PBR.md)
 15. [docs/编辑器界面.md](docs/编辑器界面.md) → [engine/editor/Editor.cpp](engine/editor/Editor.cpp) —— 编辑器外壳与视口
+16. [docs/04-资源层.md](docs/04-资源层.md) → [engine/asset/AssetManager.cpp](engine/asset/AssetManager.cpp) → [engine/asset/Cookers.cpp](engine/asset/Cookers.cpp) —— 资产从磁盘到 GPU
 
 ## 里程碑进度
 
@@ -101,7 +106,7 @@ math ← core ← platform ← rhi ← render ← world / debug / 特性模块(t
 - [x] **M2 RHI + Render Graph**：自动 barrier、瞬态贴图、pass 开关与默认资源、shader 热重载与错误材质、RenderDoc、GPU 计时、自由相机
 - [x] **M3 网格与 PBR**：glTF、shader 公共库与 `SurfaceData → ShadingModel`、Cook-Torrance、解析天空、ACES / AgX、调试视图、材质编辑
 - [x] **编辑器界面**：仿 UE/Unity 停靠布局、离屏视口、点选与聚焦、大纲、检视器、环境光照（太阳方位盘、时间预设）、日志/性能/Render Graph/Shader 面板、状态栏
-- [ ] M3.5 资源层（见 [架构与路线图](docs/架构与路线图.md)）
+- [x] **M3.5 资源层**：Job 系统、GUID 与 .meta、烘焙（meshoptimizer LOD、BC7/BC5 压缩）、句柄 + 后台加载 + 兜底 + 热重载、场景保存/加载、拖放导入、按实体材质覆盖
 - [ ] M4 地形与物理
 - [ ] M5 海面
 - [ ] M6 Medium + 水下 + 材质读取介质

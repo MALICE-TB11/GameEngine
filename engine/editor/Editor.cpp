@@ -114,6 +114,7 @@ void Editor::draw(float dtSeconds) {
         io.ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
 
     handleShortcuts();
+    processPendingPlacements();
 
     if (m_gameMode) {
         m_ctx.renderer->useBackbufferOutput();
@@ -161,6 +162,77 @@ void Editor::draw(float dtSeconds) {
         m_layoutJustBuilt = false;
     }
     drawHelpPopup();
+    drawSaveSceneAsPopup();
+}
+
+void Editor::drawSaveSceneAsPopup() {
+    if (m_openSaveAs) {
+        ImGui::OpenPopup("场景另存为");
+        m_openSaveAs = false;
+    }
+    if (ImGui::BeginPopupModal("场景另存为", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextDisabled("保存到 scenes/<名字>.scene.json");
+        ImGui::SetNextItemWidth(260);
+        ImGui::InputText("名字", m_saveAsName, sizeof(m_saveAsName));
+        if (ImGui::Button("保存", ImVec2(120, 0)) && m_saveAsName[0] && m_ctx.scenePath && m_ctx.saveScene) {
+            *m_ctx.scenePath = std::filesystem::path("scenes") / (std::string(m_saveAsName) + ".scene.json");
+            m_ctx.saveScene();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("取消", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+
+void Editor::onSceneReplaced() {
+    m_selection.reset();
+    m_selectedMaterial = nullptr;
+}
+
+void Editor::deleteSelection() {
+    if (!m_selection) return;
+    m_ctx.scene->remove(*m_selection);
+    // 删除会让后面实体的 id 前移；最简单可靠的做法是清掉选择
+    m_selection.reset();
+    m_selectedMaterial = nullptr;
+}
+
+void Editor::placeModelInFront(ModelHandle model, const std::string& name) {
+    // 放在相机前方 6 米处的地面上（y 不低于 0：不要埋进海平面以下）
+    Transform t;
+    const vec3 p = m_ctx.camera->position() + m_ctx.camera->forward() * 6.0f;
+    t.position = vec3(p.x, std::max(0.0f, p.y - 1.5f), p.z);
+    // 模型还在后台烘焙/加载时，不知道它有几个实例：先记下，等加载完成再实例化（见 processPendingPlacements）
+    m_pendingPlacements.push_back({model, t, name});
+}
+
+void Editor::processPendingPlacements() {
+    for (size_t i = 0; i < m_pendingPlacements.size();) {
+        const PendingPlacement& p = m_pendingPlacements[i];
+        if (m_ctx.assets->status(p.model) == asset::AssetStatus::Loading) {
+            ++i;
+            continue;
+        }
+        // 就绪或失败都放进场景：失败时显示兜底立方体，至少看得到「这里有个东西没加载出来」
+        m_selection = m_ctx.scene->instantiate(p.model, p.transform, p.name);
+        m_selectedMaterial = nullptr;
+        m_scrollOutlinerToSelection = true;
+        m_pendingPlacements.erase(m_pendingPlacements.begin() + long(i));
+    }
+}
+
+void Editor::onFilesDropped(const std::vector<std::filesystem::path>& files) {
+    for (const auto& file : files) {
+        auto& db = m_ctx.assets->database();
+        const auto guid = db.importExternal(file);
+        if (!guid) continue;
+        const auto rec = db.find(*guid);
+        if (rec && rec->type == asset::AssetType::Model) {
+            placeModelInFront(m_ctx.assets->loadModel(*guid), file.stem().string());
+            LOG_INFO("已放入场景: {}（首次导入会在后台烘焙，完成前显示品红占位立方体）", file.filename().string());
+        }
+    }
 }
 
 void Editor::selectByName(const std::string& name) {
@@ -203,7 +275,11 @@ void Editor::handleShortcuts() {
         ++sim.pendingSteps;
     }
     if (pressed(ImGuiKey_F9)) takeScreenshot();
-    if (io.KeyCtrl && pressed(ImGuiKey_S) && m_ctx.saveConfig) m_ctx.saveConfig();
+    if (io.KeyCtrl && pressed(ImGuiKey_S)) {
+        if (m_ctx.saveScene) m_ctx.saveScene();
+        if (m_ctx.saveConfig) m_ctx.saveConfig();
+    }
+    if (pressed(ImGuiKey_Delete) && !m_gameMode) deleteSelection();
     if (io.KeyCtrl && pressed(ImGuiKey_R)) m_ctx.renderer->pipelines().reloadAll();
     if (!io.KeyCtrl && pressed(ImGuiKey_F) && !m_gameMode) focusSelection();
 }
@@ -218,7 +294,28 @@ void Editor::drawMenuBar() {
     RendererSettings& rs = *m_ctx.rendererSettings;
 
     if (ImGui::BeginMenu("文件")) {
-        if (ImGui::MenuItem("保存配置", "Ctrl+S") && m_ctx.saveConfig) m_ctx.saveConfig();
+        if (ImGui::MenuItem("新建场景") && m_ctx.newScene) m_ctx.newScene();
+        if (ImGui::BeginMenu("打开场景")) {
+            // 列出 scenes/ 目录下的场景文件
+            bool any = false;
+            std::error_code ec;
+            for (const auto& entry : std::filesystem::directory_iterator(fs::resolve("scenes"), ec)) {
+                const std::string fname = entry.path().filename().string();
+                if (fname.size() < 11 || fname.substr(fname.size() - 11) != ".scene.json") continue;
+                any = true;
+                const bool current = m_ctx.scenePath && entry.path().filename() == m_ctx.scenePath->filename();
+                if (ImGui::MenuItem(fname.c_str(), nullptr, current) && m_ctx.openScene)
+                    m_ctx.openScene(std::filesystem::path("scenes") / entry.path().filename());
+            }
+            if (!any) ImGui::TextDisabled("scenes/ 下还没有场景文件");
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("保存场景与配置", "Ctrl+S")) {
+            if (m_ctx.saveScene) m_ctx.saveScene();
+            if (m_ctx.saveConfig) m_ctx.saveConfig();
+        }
+        if (ImGui::MenuItem("场景另存为…")) m_openSaveAs = true;
+        ImGui::Separator();
         if (ImGui::MenuItem("从文件重新加载配置") && m_ctx.reloadConfig) m_ctx.reloadConfig();
         ImGui::Separator();
         if (ImGui::MenuItem("截图", "F9")) takeScreenshot();
@@ -232,6 +329,7 @@ void Editor::drawMenuBar() {
             m_selection.reset();
             m_selectedMaterial = nullptr;
         }
+        if (ImGui::MenuItem("删除选中实体", "Delete", false, m_selection.has_value())) deleteSelection();
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("视图")) {
@@ -452,8 +550,15 @@ void Editor::drawStatusBar() {
         ImGui::PopStyleColor(2);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("显存使用 / 项目预算 2048 MB（驱动可用 %.0f MB）", budget);
         sep();
-        const VkExtent2D se = m_ctx.renderer->sceneExtent();
-        ImGui::TextDisabled("视口 %u×%u", se.width, se.height);
+        ImGui::TextDisabled("△ %.1fk", double(m_ctx.scene->lastTriangleCount()) / 1000.0);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("本帧绘制的三角形数（已按 LOD 选择）");
+        sep();
+        const std::string sceneName = m_ctx.scenePath ? m_ctx.scenePath->filename().string() : std::string("未命名");
+        ImGui::TextDisabled("场景 %s", sceneName.c_str());
+        if (const uint32_t pending = m_ctx.assets->pendingCount()) {
+            sep();
+            ImGui::TextColored(theme::kWarn, "↻ 资源加载中 %u", pending);
+        }
 
         // ---- 右对齐部分 ----
         char selText[128] = "未选中";

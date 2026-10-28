@@ -1,0 +1,927 @@
+{
+  "entities": [
+    {
+      "instance": 0,
+      "material": {
+        "baseColor": [
+          0.5,
+          0.42,
+          0.28,
+          1.0
+        ],
+        "emissive": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "flags": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "pbr": [
+          0.0,
+          0.92,
+          1.0,
+          0.5
+        ]
+      },
+      "model": "2ff59b57c007f7307c363b8e8f281da6",
+      "name": "Ground",
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        80.0,
+        1.0,
+        80.0
+      ],
+      "visible": true
+    },
+    {
+      "instance": 0,
+      "material": {
+        "baseColor": [
+          0.55,
+          0.06,
+          0.05,
+          1.0
+        ],
+        "emissive": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "flags": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "pbr": [
+          0.0,
+          0.0,
+          1.0,
+          0.5
+        ]
+      },
+      "model": "3df956210cc4c19e3aacf3bbd583d453",
+      "name": "材质球/Dielectric_r0",
+      "position": [
+        -4.5,
+        0.45,
+        2.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        0.9,
+        0.9,
+        0.9
+      ],
+      "visible": true
+    },
+    {
+      "instance": 0,
+      "material": {
+        "baseColor": [
+          0.55,
+          0.06,
+          0.05,
+          1.0
+        ],
+        "emissive": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "flags": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "pbr": [
+          0.0,
+          0.1666667,
+          1.0,
+          0.5
+        ]
+      },
+      "model": "3df956210cc4c19e3aacf3bbd583d453",
+      "name": "材质球/Dielectric_r1",
+      "position": [
+        -3.0,
+        0.45,
+        2.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        0.9,
+        0.9,
+        0.9
+      ],
+      "visible": true
+    },
+    {
+      "instance": 0,
+      "material": {
+        "baseColor": [
+          0.55,
+          0.06,
+          0.05,
+          1.0
+        ],
+        "emissive": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "flags": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "pbr": [
+          0.0,
+          0.3333333,
+          1.0,
+          0.5
+        ]
+      },
+      "model": "3df956210cc4c19e3aacf3bbd583d453",
+      "name": "材质球/Dielectric_r2",
+      "position": [
+        -1.5,
+        0.45,
+        2.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        0.9,
+        0.9,
+        0.9
+      ],
+      "visible": true
+    },
+    {
+      "instance": 0,
+      "material": {
+        "baseColor": [
+          0.55,
+          0.06,
+          0.05,
+          1.0
+        ],
+        "emissive": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "flags": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "pbr": [
+          0.0,
+          0.5,
+          1.0,
+          0.5
+        ]
+      },
+      "model": "3df956210cc4c19e3aacf3bbd583d453",
+      "name": "材质球/Dielectric_r3",
+      "position": [
+        0.0,
+        0.45,
+        2.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        0.9,
+        0.9,
+        0.9
+      ],
+      "visible": true
+    },
+    {
+      "instance": 0,
+      "material": {
+        "baseColor": [
+          0.55,
+          0.06,
+          0.05,
+          1.0
+        ],
+        "emissive": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "flags": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "pbr": [
+          0.0,
+          0.6666667,
+          1.0,
+          0.5
+        ]
+      },
+      "model": "3df956210cc4c19e3aacf3bbd583d453",
+      "name": "材质球/Dielectric_r4",
+      "position": [
+        1.5,
+        0.45,
+        2.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        0.9,
+        0.9,
+        0.9
+      ],
+      "visible": true
+    },
+    {
+      "instance": 0,
+      "material": {
+        "baseColor": [
+          0.55,
+          0.06,
+          0.05,
+          1.0
+        ],
+        "emissive": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "flags": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "pbr": [
+          0.0,
+          0.8333333,
+          1.0,
+          0.5
+        ]
+      },
+      "model": "3df956210cc4c19e3aacf3bbd583d453",
+      "name": "材质球/Dielectric_r5",
+      "position": [
+        3.0,
+        0.45,
+        2.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        0.9,
+        0.9,
+        0.9
+      ],
+      "visible": true
+    },
+    {
+      "instance": 0,
+      "material": {
+        "baseColor": [
+          0.55,
+          0.06,
+          0.05,
+          1.0
+        ],
+        "emissive": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "flags": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "pbr": [
+          0.0,
+          1.0,
+          1.0,
+          0.5
+        ]
+      },
+      "model": "3df956210cc4c19e3aacf3bbd583d453",
+      "name": "材质球/Dielectric_r6",
+      "position": [
+        4.5,
+        0.45,
+        2.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        0.9,
+        0.9,
+        0.9
+      ],
+      "visible": true
+    },
+    {
+      "instance": 0,
+      "material": {
+        "baseColor": [
+          1.0,
+          0.77,
+          0.34,
+          1.0
+        ],
+        "emissive": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "flags": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "pbr": [
+          1.0,
+          0.0,
+          1.0,
+          0.5
+        ]
+      },
+      "model": "3df956210cc4c19e3aacf3bbd583d453",
+      "name": "材质球/Gold_r0",
+      "position": [
+        -4.5,
+        0.45,
+        3.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        0.9,
+        0.9,
+        0.9
+      ],
+      "visible": true
+    },
+    {
+      "instance": 0,
+      "material": {
+        "baseColor": [
+          1.0,
+          0.77,
+          0.34,
+          1.0
+        ],
+        "emissive": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "flags": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "pbr": [
+          1.0,
+          0.1666667,
+          1.0,
+          0.5
+        ]
+      },
+      "model": "3df956210cc4c19e3aacf3bbd583d453",
+      "name": "材质球/Gold_r1",
+      "position": [
+        -3.0,
+        0.45,
+        3.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        0.9,
+        0.9,
+        0.9
+      ],
+      "visible": true
+    },
+    {
+      "instance": 0,
+      "material": {
+        "baseColor": [
+          1.0,
+          0.77,
+          0.34,
+          1.0
+        ],
+        "emissive": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "flags": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "pbr": [
+          1.0,
+          0.3333333,
+          1.0,
+          0.5
+        ]
+      },
+      "model": "3df956210cc4c19e3aacf3bbd583d453",
+      "name": "材质球/Gold_r2",
+      "position": [
+        -1.5,
+        0.45,
+        3.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        0.9,
+        0.9,
+        0.9
+      ],
+      "visible": true
+    },
+    {
+      "instance": 0,
+      "material": {
+        "baseColor": [
+          1.0,
+          0.77,
+          0.34,
+          1.0
+        ],
+        "emissive": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "flags": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "pbr": [
+          1.0,
+          0.5,
+          1.0,
+          0.5
+        ]
+      },
+      "model": "3df956210cc4c19e3aacf3bbd583d453",
+      "name": "材质球/Gold_r3",
+      "position": [
+        0.0,
+        0.45,
+        3.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        0.9,
+        0.9,
+        0.9
+      ],
+      "visible": true
+    },
+    {
+      "instance": 0,
+      "material": {
+        "baseColor": [
+          1.0,
+          0.77,
+          0.34,
+          1.0
+        ],
+        "emissive": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "flags": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "pbr": [
+          1.0,
+          0.6666667,
+          1.0,
+          0.5
+        ]
+      },
+      "model": "3df956210cc4c19e3aacf3bbd583d453",
+      "name": "材质球/Gold_r4",
+      "position": [
+        1.5,
+        0.45,
+        3.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        0.9,
+        0.9,
+        0.9
+      ],
+      "visible": true
+    },
+    {
+      "instance": 0,
+      "material": {
+        "baseColor": [
+          1.0,
+          0.77,
+          0.34,
+          1.0
+        ],
+        "emissive": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "flags": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "pbr": [
+          1.0,
+          0.8333333,
+          1.0,
+          0.5
+        ]
+      },
+      "model": "3df956210cc4c19e3aacf3bbd583d453",
+      "name": "材质球/Gold_r5",
+      "position": [
+        3.0,
+        0.45,
+        3.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        0.9,
+        0.9,
+        0.9
+      ],
+      "visible": true
+    },
+    {
+      "instance": 0,
+      "material": {
+        "baseColor": [
+          1.0,
+          0.77,
+          0.34,
+          1.0
+        ],
+        "emissive": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "flags": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "pbr": [
+          1.0,
+          1.0,
+          1.0,
+          0.5
+        ]
+      },
+      "model": "3df956210cc4c19e3aacf3bbd583d453",
+      "name": "材质球/Gold_r6",
+      "position": [
+        4.5,
+        0.45,
+        3.4
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        0.9,
+        0.9,
+        0.9
+      ],
+      "visible": true
+    },
+    {
+      "instance": 0,
+      "material": {
+        "baseColor": [
+          0.05,
+          0.25,
+          0.6,
+          1.0
+        ],
+        "emissive": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "flags": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "pbr": [
+          0.0,
+          0.35,
+          1.0,
+          0.5
+        ]
+      },
+      "model": "953320a11cd2f7219ecf50a4620715ed",
+      "name": "Spinner",
+      "position": [
+        -4.0,
+        1.2,
+        -1.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "visible": true
+    },
+    {
+      "instance": 0,
+      "model": "ab8a5a8d99bb362023e249519fac2cb2",
+      "name": "ruins/Base",
+      "position": [
+        0.0,
+        0.0,
+        -3.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "visible": true
+    },
+    {
+      "instance": 1,
+      "model": "ab8a5a8d99bb362023e249519fac2cb2",
+      "name": "ruins/Pillar_L",
+      "position": [
+        0.0,
+        0.0,
+        -3.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "visible": true
+    },
+    {
+      "instance": 2,
+      "model": "ab8a5a8d99bb362023e249519fac2cb2",
+      "name": "ruins/Pillar_R",
+      "position": [
+        0.0,
+        0.0,
+        -3.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "visible": true
+    },
+    {
+      "instance": 3,
+      "model": "ab8a5a8d99bb362023e249519fac2cb2",
+      "name": "ruins/BronzeRing",
+      "position": [
+        0.0,
+        0.0,
+        -3.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "visible": true
+    },
+    {
+      "instance": 4,
+      "model": "ab8a5a8d99bb362023e249519fac2cb2",
+      "name": "ruins/Lintel",
+      "position": [
+        0.0,
+        0.0,
+        -3.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "visible": true
+    },
+    {
+      "instance": 5,
+      "model": "ab8a5a8d99bb362023e249519fac2cb2",
+      "name": "ruins/Fallen",
+      "position": [
+        0.0,
+        0.0,
+        -3.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "visible": true
+    },
+    {
+      "instance": 6,
+      "model": "ab8a5a8d99bb362023e249519fac2cb2",
+      "name": "ruins/Plaque",
+      "position": [
+        0.0,
+        0.0,
+        -3.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "visible": true
+    }
+  ],
+  "version": 1
+}

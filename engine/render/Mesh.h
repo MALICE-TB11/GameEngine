@@ -24,9 +24,18 @@ struct Vertex {
 };
 static_assert(sizeof(Vertex) == 48, "Vertex 布局必须与 shaders/common/mesh.hlsli 的 VSIn 一致");
 
+// 一级 LOD = 索引缓冲中的一段。所有 LOD 共用同一份顶点缓冲（简化只删三角形、不新增顶点），
+// 所以切换 LOD 只是换一段索引，不需要换缓冲。
+struct MeshLod {
+    uint32_t firstIndex = 0;
+    uint32_t indexCount = 0;
+    float error = 0.0f; // 这一级相对原网格的几何误差（模型空间，米）；LOD0 为 0
+};
+
 struct MeshData {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+    std::vector<MeshLod> lods; // 为空表示只有一级：全部索引
 };
 
 struct Aabb {
@@ -41,14 +50,15 @@ struct Aabb {
 struct GpuMesh {
     rhi::Buffer vertexBuffer;
     rhi::Buffer indexBuffer;
-    uint32_t indexCount = 0;
+    uint32_t indexCount = 0; // LOD0 的索引数
+    std::vector<MeshLod> lods;
     Aabb bounds;
     std::string name;
 };
 
 GpuMesh uploadMesh(rhi::Device& device, const MeshData& data, const std::string& name);
 void destroyMesh(rhi::Device& device, GpuMesh& mesh);
-void drawMesh(VkCommandBuffer cmd, const GpuMesh& mesh);
+void drawMesh(VkCommandBuffer cmd, const GpuMesh& mesh, uint32_t lod = 0);
 
 // 把 Vertex 的顶点输入描述填进管线状态
 void setMeshVertexInput(rhi::GraphicsState& state);

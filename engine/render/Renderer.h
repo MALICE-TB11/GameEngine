@@ -43,6 +43,7 @@ struct RendererSettings {
     bool vsync = true;
     vec4 clearColor{0.02f, 0.05f, 0.08f, 1.0f}; // Sky pass 关闭时的背景（线性 HDR 值）
     int debugView = int(DebugView::None);
+    float lodThresholdPx = 1.0f; // LOD 误差投影到屏幕上允许的像素数：越大越早切到粗模型
 };
 
 class Renderer {
