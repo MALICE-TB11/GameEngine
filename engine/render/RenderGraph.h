@@ -100,6 +100,7 @@ struct CompileResult {
     std::vector<Barrier> finalBarriers;  // 帧末过渡到要求状态
     std::vector<rhi::ImageState> endStates;
     std::vector<rhi::ImageState> endWrites; // 每个资源帧末的「最近一次写入」，传给下一帧
+    std::vector<bool> endContent;           // 帧末是否有内容（持久贴图据此决定下一帧能否读）
 };
 
 CompileResult compile(const std::vector<PassDecl>& passes, const std::vector<ResourceDecl>& resources);
@@ -123,6 +124,11 @@ struct TextureDesc {
     // 图之外的代码也会直接采样这张图（例如编辑器视口：ImGui 用提前缓存的描述符显示它）。
     // 这类贴图没人写时不能只在图内部换成默认贴图，而要真的清成默认值，见 compile 的「容错 1」
     bool externalRead = false;
+    // 数组层数（> 1 时 shader 里用 Texture2DArray / RWTexture2DArray）。没有内容时的默认贴图也是数组
+    uint32_t layers = 1;
+    // 内容跨帧保留：上一帧写过的内容这一帧仍然有效（泡沫累积这类「读上一帧结果」的模拟）。
+    // 普通瞬态贴图每帧开始都视为「没有内容」。
+    bool persistent = false;
 };
 
 class RenderGraph;
@@ -133,6 +139,9 @@ struct PassContext {
     FrameContext* frame = nullptr;
     // 资源的 image view；没有内容的资源会返回默认贴图
     VkImageView view(TextureHandle h) const;
+    // 资源本帧是否有真实内容（false = 被换成了默认贴图）。
+    // storage 读取不能绑默认贴图（它没有 STORAGE 用途）：compute pass 发现输入缺失时应直接跳过
+    bool hasContent(TextureHandle h) const;
     const RenderGraph* graph = nullptr;
     uint32_t passIndex = 0;
 };
@@ -208,6 +217,7 @@ private:
         VkImageView view = VK_NULL_HANDLE;
         VkFormat format = VK_FORMAT_UNDEFINED;
         VkExtent2D extent{};
+        uint32_t layers = 1;
         VkImageUsageFlags usage = 0;
         rhi::ImageState importInitial, importFinal;
     };
@@ -224,13 +234,14 @@ private:
         VkImageUsageFlags usage = 0;
         rhi::ImageState state;
         rhi::ImageState lastWrite;
+        bool hasContent = false; // 持久贴图：上一帧结束时有没有有效内容
         uint64_t lastUsedFrame = 0;
     };
 
     void addAccess(uint32_t pass, TextureHandle t, Access a, LoadOp load);
-    Pooled& acquirePooled(const std::string& name, VkFormat format, VkExtent2D extent, VkImageUsageFlags usage);
+    Pooled& acquirePooled(const std::string& name, VkFormat format, VkExtent2D extent, VkImageUsageFlags usage, uint32_t layers = 1);
     void realizeTransients();
-    VkImageView fallbackView(Fallback f) const;
+    VkImageView fallbackView(Fallback f, uint32_t layers = 1) const;
 
     rhi::Device* m_device = nullptr;
     DefaultResources* m_defaults = nullptr;

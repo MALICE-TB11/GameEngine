@@ -76,12 +76,19 @@ public:
     const std::filesystem::path& path() const { return m_path; }
     const std::string& lastError() const { return m_lastError; }
 
+    // 命令行临时覆盖（--set ocean.mode=0）：只影响 get()，save() 不会把它写进文件
+    void setOverride(const std::string& section, const std::string& key, const nlohmann::json& value) {
+        m_overrides[section][key] = value;
+    }
+
     template <class T>
     T get(const char* section) const {
         T value{};
-        if (!m_json.contains(section)) return value;
+        if (!m_json.contains(section) && !m_overrides.contains(section)) return value;
         try {
-            value = m_json.at(section).get<T>();
+            nlohmann::json merged = m_json.contains(section) ? m_json.at(section) : nlohmann::json::object();
+            if (m_overrides.contains(section)) merged.merge_patch(m_overrides.at(section));
+            value = merged.get<T>();
         } catch (const std::exception& e) {
             // 类型不对（比如把数字写成了字符串）：用默认值，并说明是哪一节出错
             LOG_ERROR("配置 {} 的 [{}] 解析失败，使用默认值: {}", m_path.filename().string(), section, e.what());
@@ -97,6 +104,7 @@ public:
 private:
     std::filesystem::path m_path;
     nlohmann::json m_json = nlohmann::json::object();
+    nlohmann::json m_overrides = nlohmann::json::object();
     std::filesystem::file_time_type m_stamp{};
     std::string m_lastError;
 };

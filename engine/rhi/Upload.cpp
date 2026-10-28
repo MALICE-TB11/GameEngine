@@ -146,4 +146,35 @@ Image createTextureFromMips(Device& device, VkFormat format, uint32_t width, uin
     return image;
 }
 
+Image createTextureArray(Device& device, VkFormat format, uint32_t width, uint32_t height, uint32_t layers, const void* data,
+                         uint32_t bytesPerTexel, const char* name) {
+    ImageDesc desc;
+    desc.width = width;
+    desc.height = height;
+    desc.format = format;
+    desc.layers = layers;
+    desc.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    desc.name = name;
+    Image image = createImage(device, desc);
+
+    const VkDeviceSize size = VkDeviceSize(width) * height * layers * bytesPerTexel;
+    Buffer staging = createBuffer(device, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryUsage::Upload, "ArrayStaging");
+    std::memcpy(staging.mapped, data, size);
+    vmaFlushAllocation(device.allocator(), staging.allocation, 0, VK_WHOLE_SIZE);
+
+    device.immediateSubmit([&](VkCommandBuffer cmd) {
+        const ImageState undefined{VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE, VK_IMAGE_LAYOUT_UNDEFINED};
+        const ImageState dst{VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL};
+        const ImageState shaderRead{kTextureConsumers, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        imageBarrier(cmd, image.image, VK_IMAGE_ASPECT_COLOR_BIT, undefined, dst);
+        VkBufferImageCopy region{};
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, layers}; // 缓冲里各层紧挨着，一次拷完
+        region.imageExtent = {width, height, 1};
+        vkCmdCopyBufferToImage(cmd, staging.buffer, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        imageBarrier(cmd, image.image, VK_IMAGE_ASPECT_COLOR_BIT, dst, shaderRead);
+    });
+    destroyBuffer(device, staging);
+    return image;
+}
+
 } // namespace eng::rhi

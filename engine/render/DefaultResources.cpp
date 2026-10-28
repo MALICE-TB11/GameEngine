@@ -91,6 +91,26 @@ void DefaultResources::init(rhi::Device& device) {
         vkCmdClearDepthStencilImage(cmd, m_depthFar.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &range);
         rhi::imageBarrier(cmd, m_depthFar.image, VK_IMAGE_ASPECT_DEPTH_BIT, dst, read);
     });
+
+    // 黑色数组贴图：Texture2DArray 读者（海洋级联）的默认值。2 层只是为了让 createImage 建出 2D_ARRAY view
+    rhi::ImageDesc ad;
+    ad.format = VK_FORMAT_R8G8B8A8_UNORM;
+    ad.layers = 2;
+    ad.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    ad.name = "DefaultBlackArray";
+    m_blackArray = rhi::createImage(device, ad);
+    device.immediateSubmit([&](VkCommandBuffer cmd) {
+        const rhi::ImageState undefined{VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE, VK_IMAGE_LAYOUT_UNDEFINED};
+        const rhi::ImageState dst{VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL};
+        const rhi::ImageState read{VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
+                                       VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                   VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        rhi::imageBarrier(cmd, m_blackArray.image, VK_IMAGE_ASPECT_COLOR_BIT, undefined, dst);
+        const VkClearColorValue black{{0.0f, 0.0f, 0.0f, 0.0f}};
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, VK_REMAINING_ARRAY_LAYERS};
+        vkCmdClearColorImage(cmd, m_blackArray.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &range);
+        rhi::imageBarrier(cmd, m_blackArray.image, VK_IMAGE_ASPECT_COLOR_BIT, dst, read);
+    });
 }
 
 void DefaultResources::shutdown() {
@@ -101,6 +121,7 @@ void DefaultResources::shutdown() {
     vkDestroySampler(dev, m_pointClamp, nullptr);
     vkDestroySampler(dev, m_shadowCompare, nullptr);
     rhi::destroyImage(*m_device, m_depthFar);
+    rhi::destroyImage(*m_device, m_blackArray);
     rhi::destroyImage(*m_device, m_black);
     rhi::destroyImage(*m_device, m_white);
     rhi::destroyImage(*m_device, m_flatNormal);

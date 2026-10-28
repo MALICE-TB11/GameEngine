@@ -12,6 +12,7 @@
 #include "editor/Editor.h"
 #include "Player.h"
 #include "math/Transform.h"
+#include "ocean/OceanRenderer.h"
 #include "physics/PhysicsWorld.h"
 #include "platform/Input.h"
 #include "platform/Window.h"
@@ -44,6 +45,10 @@ struct LaunchOptions {
     std::optional<std::array<float, 5>> camera; // --camera x,y,z,yaw,pitch：编辑器相机初始位置（截图用）
     bool terrainLod = false;            // --terrain-lod：地形按四叉树级别着色
     std::vector<std::string> disabledPasses; // --disable-pass A,B：启动时关闭这些 pass（故障演练）
+    struct Override {
+        std::string section, key, value;
+    };
+    std::vector<Override> overrides; // --set section.key=value：本次运行临时覆盖配置
 };
 
 struct DebugSettings {
@@ -92,6 +97,7 @@ private:
     terrain::TerrainSettings m_terrainSettings;
     physics::PhysicsSettings m_physicsSettings;
     PlayerSettings m_playerSettings;
+    ocean::OceanSettings m_oceanSettings;
 
     Window m_window;
     Input m_input;
@@ -123,6 +129,10 @@ private:
     physics::BodyId m_terrainBody;
     Player m_player;
     MaterialParams m_playerMaterial;
+
+    // ---- M5：海洋 ----
+    ocean::OceanRenderer m_ocean;
+    asset::TextureHandle m_foamTexture;
 };
 
 } // namespace eng

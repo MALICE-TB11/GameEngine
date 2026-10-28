@@ -3,6 +3,7 @@
 #include "core/Assert.h"
 #include "rhi/Device.h"
 
+#include <algorithm>
 #include <string>
 
 namespace eng::rhi {
@@ -58,7 +59,7 @@ Image createImage(Device& device, const ImageDesc& desc) {
     ci.format = desc.format;
     ci.extent = {desc.width, desc.height, 1};
     ci.mipLevels = desc.mipLevels;
-    ci.arrayLayers = 1;
+    ci.arrayLayers = std::max(1u, desc.layers);
     ci.samples = VK_SAMPLE_COUNT_1_BIT;
     ci.tiling = VK_IMAGE_TILING_OPTIMAL;
     ci.usage = desc.usage;
@@ -75,15 +76,16 @@ Image createImage(Device& device, const ImageDesc& desc) {
     img.format = desc.format;
     img.extent = {desc.width, desc.height};
     img.mipLevels = desc.mipLevels;
+    img.layers = ci.arrayLayers;
     img.aspect = aspectOf(desc.format);
     setDebugName(device.device(), img.image, desc.name);
     vmaSetAllocationName(device.allocator(), img.allocation, desc.name);
 
     VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     vi.image = img.image;
-    vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vi.viewType = img.layers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
     vi.format = desc.format;
-    vi.subresourceRange = {img.aspect, 0, desc.mipLevels, 0, 1};
+    vi.subresourceRange = {img.aspect, 0, desc.mipLevels, 0, img.layers};
     ENG_CHECK_VK(vkCreateImageView(device.device(), &vi, nullptr, &img.view));
     setDebugName(device.device(), img.view, (std::string(desc.name) + "View").c_str());
     return img;

@@ -40,6 +40,10 @@ namespace terrain {
 struct TerrainSettings;
 class TerrainRenderer;
 } // namespace terrain
+namespace ocean {
+struct OceanSettings;
+class OceanRenderer;
+} // namespace ocean
 
 // 模拟控制：暂停 / 单步 / 时间缩放。App 在推进固定步长时读取它。
 struct SimulationControl {
@@ -79,6 +83,9 @@ struct EditorContext {
     ScenePhysics* scenePhysics = nullptr;
     std::function<void()> regenerateTerrain; // 用 *terrainSettings 重新生成高度场（渲染 + 碰撞一起更新）
     std::function<void()> worldPanelExtra;   // 应用自己的信息（玩家状态等），显示在「地形与物理」末尾
+    // ---- M5：海洋（面板直接改 *oceanSettings，再交给 ocean->setSettings） ----
+    ocean::OceanSettings* oceanSettings = nullptr;
+    ocean::OceanRenderer* ocean = nullptr;
 };
 
 class Editor {
@@ -127,6 +134,7 @@ private:
     void drawRenderSettingsPanel();
     void drawProjectSettingsPanel();
     void drawWorldPanel(); // EditorWorldPanel.cpp：地形生成/LOD/分层材质 + 物理统计
+    void drawOceanPanel(); // EditorOceanPanel.cpp：风浪、泡沫、水体着色
     void drawSaveSceneAsPopup();
     // ---- 操作 ----
     void pickAt(const ImVec2& uv);
@@ -153,7 +161,8 @@ private:
     double m_gameModeEnteredAt = 0.0;
 
     struct Panels {
-        bool outliner = true, assets = true, inspector = true, environment = true, renderSettings = true, project = true, world = true;
+        bool outliner = true, assets = true, inspector = true, environment = true, renderSettings = true, project = true, world = true,
+             ocean = true;
         bool console = true, profiler = true, renderGraph = true, shader = true;
     } m_show;
 

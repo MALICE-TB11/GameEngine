@@ -43,6 +43,10 @@ math 只依赖 GLM，任何层都可用；debug 可依赖 render；editor 在最
 - 配置数值进入引擎前统一做范围检查（`App::sanitizeSettings` / `clampSetting`）；核心类（如 `FixedStepLoop`）自己也要保证不变量。
 - 图之外的代码会直接采样的 Render Graph 贴图（例如编辑器视口）设 `TextureDesc::externalRead`。
 - 地形的渲染网格、`Heightfield::heightAt`、Jolt 高度场必须是同一个三角形表面（每格沿 (x,z)→(x+1,z+1) 对角线切开）。
+- 海洋的两种实现（Gerstner / FFT）共用 `OceanSpectrum` 的同一份频谱与位移约定（y = a cos θ，水平 = −Q a d̂ sin θ），改一边要同步另一边。
+- 需要读「上一帧结果」的模拟贴图用 `TextureDesc::persistent`（A/B 交替命名）；多层数据用 `TextureDesc::layers`（shader 里是 Texture2DArray）。compute pass 读 storage 输入前先 `ctx.hasContent()`，缺失就跳过。
+- 程序生成的网格要检查绕序（正面朝向），否则 `SV_IsFrontFace` 会让法线翻转。
+- 参考仓库（HPWater MPL 2.0、HPVolumeCloud MIT）只读思路，不复制代码。
 
 ## 调试设施
 validation layer（Debug 默认开）、所有 Vulkan 对象 debug name、RenderDoc in-app 捕获（F12）、每个 pass 的 GPU timestamp。

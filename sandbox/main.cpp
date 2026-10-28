@@ -12,6 +12,7 @@
 //   sandbox.exe --camera 0,80,200,-90,-25       编辑器相机初始位置 x,y,z 与朝向 yaw,pitch（度），截图用
 //   sandbox.exe --terrain-lod                   地形按四叉树级别着色（截图/调参用）
 //   sandbox.exe --disable-pass FXAA,Tonemap     启动时关闭这些 pass（故障演练：下游应自动用默认资源）
+//   sandbox.exe --set ocean.windSpeed=15        临时覆盖一个配置项（可多次使用；不会写回 config）
 
 #include "App.h"
 
@@ -50,6 +51,14 @@ int main(int argc, char** argv) {
                 opts.camera = std::array<float, 5>{v[0], v[1], v[2], v[3], v[4]};
             else
                 LOG_WARN("--camera 格式应为 x,y,z[,yaw,pitch]");
+        } else if (arg == "--set" && i + 1 < argc) {
+            // --set section.key=value：本次运行临时覆盖一个配置项（不写回文件），value 按 JSON 解析，失败就当字符串
+            const std::string kv = argv[++i];
+            const size_t dot = kv.find('.'), eq = kv.find('=');
+            if (dot != std::string::npos && eq != std::string::npos && dot < eq)
+                opts.overrides.push_back({kv.substr(0, dot), kv.substr(dot + 1, eq - dot - 1), kv.substr(eq + 1)});
+            else
+                LOG_WARN("--set 格式应为 section.key=value，例如 --set ocean.mode=0");
         } else if (arg == "--terrain-lod") {
             opts.terrainLod = true;
         } else if (arg == "--disable-pass" && i + 1 < argc) {

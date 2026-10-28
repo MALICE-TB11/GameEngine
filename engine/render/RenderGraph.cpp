@@ -179,6 +179,7 @@ CompileResult compile(const std::vector<PassDecl>& passes, const std::vector<Res
         state[r] = resources[r].final;
         lastWrite[r] = {};
     }
+    out.endContent = content;
     out.endStates = std::move(state);
     out.endWrites = std::move(lastWrite);
     return out;
@@ -190,8 +191,13 @@ VkImageView PassContext::view(TextureHandle h) const {
     ENG_ASSERT(h.valid() && h.index < graph->m_resources.size(), "无效的 TextureHandle");
     const auto& subs = graph->m_substituted[passIndex];
     if (std::find(subs.begin(), subs.end(), h.index) != subs.end())
-        return graph->fallbackView(graph->m_resources[h.index].desc.fallback);
+        return graph->fallbackView(graph->m_resources[h.index].desc.fallback, graph->m_resources[h.index].layers);
     return graph->m_resources[h.index].view;
+}
+
+bool PassContext::hasContent(TextureHandle h) const {
+    const auto& subs = graph->m_substituted[passIndex];
+    return std::find(subs.begin(), subs.end(), h.index) == subs.end();
 }
 
 PassBuilder& PassBuilder::color(TextureHandle t, LoadOp load) {
@@ -257,6 +263,7 @@ TextureHandle RenderGraph::createTexture(const TextureDesc& desc) {
     Resource r;
     r.desc = desc;
     r.format = desc.format;
+    r.layers = std::max(1u, desc.layers);
     if (desc.externalRead) r.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT; // 没人写时要能清屏
     if (desc.width && desc.height) {
         r.extent = {desc.width, desc.height};
@@ -313,7 +320,9 @@ bool& RenderGraph::passEnabled(const std::string& name) {
     return m_enabled.try_emplace(name, true).first->second;
 }
 
-VkImageView RenderGraph::fallbackView(Fallback f) const {
+VkImageView RenderGraph::fallbackView(Fallback f, uint32_t layers) const {
+    // 数组贴图的读者在 shader 里声明的是 Texture2DArray：默认贴图也必须是数组 view，否则 view 类型不匹配
+    if (layers > 1) return m_defaults->blackArray().view;
     switch (f) {
     case Fallback::White: return m_defaults->white().view;
     case Fallback::FlatNormal: return m_defaults->flatNormal().view;
@@ -322,12 +331,13 @@ VkImageView RenderGraph::fallbackView(Fallback f) const {
     }
 }
 
-RenderGraph::Pooled& RenderGraph::acquirePooled(const std::string& name, VkFormat format, VkExtent2D extent, VkImageUsageFlags usage) {
+RenderGraph::Pooled& RenderGraph::acquirePooled(const std::string& name, VkFormat format, VkExtent2D extent, VkImageUsageFlags usage,
+                                                uint32_t layers) {
     // 总是带上 SAMPLED 与 TRANSFER_SRC：方便调试面板查看、截图，开销可以忽略
     usage |= VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     Pooled& p = m_pool[name];
     const bool mismatch = !p.image || p.image.format != format || p.image.extent.width != extent.width ||
-                          p.image.extent.height != extent.height || (p.usage & usage) != usage;
+                          p.image.extent.height != extent.height || p.image.layers != layers || (p.usage & usage) != usage;
     if (mismatch) {
         if (p.image) {
             // 旧贴图可能还被前一两帧使用：延迟到 GPU 用完再销毁
@@ -338,12 +348,14 @@ RenderGraph::Pooled& RenderGraph::acquirePooled(const std::string& name, VkForma
         d.width = extent.width;
         d.height = extent.height;
         d.format = format;
+        d.layers = layers;
         d.usage = usage | p.usage; // 只增不减：避免两种用法交替出现时反复重建
         d.name = name.c_str();
         p.image = rhi::createImage(*m_device, d);
         p.usage = d.usage;
         p.state = {};
         p.lastWrite = {};
+        p.hasContent = false; // 新建的图里是未初始化的显存
     }
     p.lastUsedFrame = m_frameNumber;
     return p;
@@ -357,7 +369,7 @@ VkImageView RenderGraph::preparePooledTexture(const TextureDesc& desc, VkImageUs
 void RenderGraph::realizeTransients() {
     for (Resource& r : m_resources) {
         if (r.imported) continue;
-        Pooled& p = acquirePooled(r.desc.name, r.format, r.extent, r.usage);
+        Pooled& p = acquirePooled(r.desc.name, r.format, r.extent, r.usage, r.layers);
         r.image = p.image.image;
         r.view = p.image.view;
     }
@@ -399,6 +411,8 @@ void RenderGraph::execute(VkCommandBuffer cmd, FrameContext& frame, rhi::GpuProf
             res[i].initial = m_pool[r.desc.name].state;
             res[i].lastWrite = m_pool[r.desc.name].lastWrite;
             res[i].materializeIfUnwritten = r.desc.externalRead;
+            // 持久贴图：上一帧写过的内容仍然有效（读它不会被换成默认贴图，布局也不会被当成 UNDEFINED 丢弃）
+            res[i].hasContent = r.desc.persistent && m_pool[r.desc.name].hasContent;
         }
     }
 
@@ -434,7 +448,7 @@ void RenderGraph::execute(VkCommandBuffer cmd, FrameContext& frame, rhi::GpuProf
         for (uint32_t r : cp.clears) {
             const float v = m_resources[r].desc.fallback == Fallback::White ? 1.0f : 0.0f;
             const VkClearColorValue color{{v, v, v, 1.0f}};
-            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
             vkCmdClearColorImage(cmd, m_resources[r].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1, &range);
         }
         emitBarriers(cp.barriers);
@@ -511,7 +525,7 @@ void RenderGraph::execute(VkCommandBuffer cmd, FrameContext& frame, rhi::GpuProf
     emitBarriers(compiled.clearBarriers);
     for (uint32_t r : compiled.clears) {
         const VkClearColorValue black{{0.0f, 0.0f, 0.0f, 1.0f}};
-        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
         vkCmdClearColorImage(cmd, m_resources[r].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &range);
     }
     emitBarriers(compiled.finalBarriers);
@@ -522,6 +536,7 @@ void RenderGraph::execute(VkCommandBuffer cmd, FrameContext& frame, rhi::GpuProf
         Pooled& p = m_pool[m_resources[i].desc.name];
         p.state = compiled.endStates[i];
         p.lastWrite = compiled.endWrites[i];
+        p.hasContent = m_resources[i].desc.persistent && compiled.endContent[i];
     }
 
     // GPU 耗时来自 profiler 读回的「两帧前」结果，按名字对应

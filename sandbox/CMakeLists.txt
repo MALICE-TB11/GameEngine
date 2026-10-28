@@ -4,7 +4,7 @@ add_executable(sandbox
     App.h
     Player.cpp
     Player.h)
-target_link_libraries(sandbox PRIVATE engine_editor engine_asset engine_terrain engine_world engine_physics glfw)
+target_link_libraries(sandbox PRIVATE engine_editor engine_asset engine_terrain engine_ocean engine_world engine_physics glfw)
 engine_set_warnings(sandbox)
 # shader 是运行时数据：构建 sandbox 时确保它们也编译好了
 add_dependencies(sandbox engine_shaders)

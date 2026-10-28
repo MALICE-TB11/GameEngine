@@ -112,6 +112,13 @@ engine_module(terrain
         terrain/TerrainRenderer.cpp
     DEPS engine_asset)
 
+# ---- ocean：海浪频谱（CPU）、FFT / Gerstner 海面、泡沫、水面着色（M5） ------------------------------
+engine_module(ocean
+    SOURCES
+        ocean/OceanSpectrum.cpp
+        ocean/OceanRenderer.cpp
+    DEPS engine_render)
+
 # ---- world：场景/实体，以及场景 ↔ 物理的同步 ----------------------------------------------------
 engine_module(world
     SOURCES
@@ -138,5 +145,6 @@ engine_module(editor
         editor/Editor.cpp
         editor/EditorPanels.cpp
         editor/EditorWorldPanel.cpp
+        editor/EditorOceanPanel.cpp
         editor/EditorTheme.cpp
-    DEPS engine_world engine_terrain engine_debug imgui)
+    DEPS engine_world engine_terrain engine_ocean engine_debug imgui)

@@ -23,6 +23,7 @@ public:
     // 1×1 深度图，深度 = 0（反向 Z 的无穷远）：阴影 pass 被关掉时代替阴影图集 → 处处照亮。
     // 必须是深度格式：比较采样（SampleCmp）不能用在颜色贴图上。
     const rhi::Image& depthFar() const { return m_depthFar; }
+    const rhi::Image& blackArray() const { return m_blackArray; } // 2D_ARRAY view，Texture2DArray 的默认值
 
     VkSampler linearWrap() const { return m_linearWrap; }   // 带各向异性，用于材质贴图
     VkSampler linearClamp() const { return m_linearClamp; } // 全屏后处理
@@ -31,7 +32,7 @@ public:
 
 private:
     rhi::Device* m_device = nullptr;
-    rhi::Image m_black, m_white, m_flatNormal, m_error, m_depthFar;
+    rhi::Image m_black, m_white, m_flatNormal, m_error, m_depthFar, m_blackArray;
     VkSampler m_linearWrap = VK_NULL_HANDLE;
     VkSampler m_linearClamp = VK_NULL_HANDLE;
     VkSampler m_pointClamp = VK_NULL_HANDLE;

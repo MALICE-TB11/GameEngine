@@ -35,6 +35,9 @@ struct ImageDesc {
     VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
     VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT;
     uint32_t mipLevels = 1;
+    // 数组层数。> 1 时 view 类型为 2D_ARRAY（shader 里是 Texture2DArray）；
+    // 海洋的多个波浪级联放在同一张数组贴图的不同层里，一次 dispatch 处理全部级联
+    uint32_t layers = 1;
     const char* name = "Image";
 };
 
@@ -45,6 +48,7 @@ struct Image {
     VkFormat format = VK_FORMAT_UNDEFINED;
     VkExtent2D extent{};
     uint32_t mipLevels = 1;
+    uint32_t layers = 1;
     VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
     explicit operator bool() const { return image != VK_NULL_HANDLE; }
 };

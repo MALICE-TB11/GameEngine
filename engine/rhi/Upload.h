@@ -24,4 +24,9 @@ Image createTexture2D(Device& device, const void* rgba8, uint32_t width, uint32_
 Image createTextureFromMips(Device& device, VkFormat format, uint32_t width, uint32_t height,
                             const std::vector<std::vector<uint8_t>>& mips, const char* name);
 
+// 上传数组贴图（单级 mip）：data 依次是第 0、1、…层，每层 width×height×bytesPerTexel 字节。
+// 用于 CPU 生成的模拟数据（海浪初始频谱）。返回的贴图处于 SHADER_READ_ONLY_OPTIMAL。
+Image createTextureArray(Device& device, VkFormat format, uint32_t width, uint32_t height, uint32_t layers, const void* data,
+                         uint32_t bytesPerTexel, const char* name);
+
 } // namespace eng::rhi

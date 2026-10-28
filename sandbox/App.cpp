@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <functional>
 #include <thread>
 
 namespace eng {
@@ -39,6 +40,12 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(TerrainSettings, resolution, wor
 namespace physics {
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(PhysicsSettings, gravity, maxBodies, collisionSteps, threads, tempMemoryMB)
 } // namespace physics
+namespace ocean {
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(OceanSettings, enabled, mode, windSpeed, windDirectionDeg, fetchKm, depth, peakEnhancement,
+                                                spread, swell, heightScale, choppiness, cascadeSizes, foamBias, foamIntensity, foamDecay,
+                                                shoreFoamWidth, foamTiling, absorption, scatterColor, sssColor, sssStrength, roughness,
+                                                refraction, reflection, gridRings, gridSegments, gridInner, gridOuter, gerstnerWaves)
+} // namespace ocean
 
 int App::run(const LaunchOptions& options) {
     if (!init(options)) {
@@ -126,6 +133,7 @@ int App::run(const LaunchOptions& options) {
         lod.thresholdPx = m_rendererSettings.lodThresholdPx;
         m_scene.buildDrawList(m_drawList, float(m_loop.alpha()), lod, m_editor.selection(), m_editor.highlightStrength(now));
         addPlayerDraw(float(m_loop.alpha()));
+        m_ocean.setFoamTexture(m_assets.texture(m_foamTexture)); // 指针只用于本帧（热重载会换掉它）
         if (m_renderer.drawFrame(m_view, m_drawList) && counting) {
             ++frame;
             if (m_options.frames > 0) frameMs.push_back(float(dt * 1000.0));
@@ -158,6 +166,12 @@ int App::run(const LaunchOptions& options) {
 bool App::init(const LaunchOptions& options) {
     m_options = options;
     m_config = ConfigFile("config/engine.json");
+    for (const auto& o : options.overrides) {
+        nlohmann::json v = nlohmann::json::parse(o.value, nullptr, false);
+        if (v.is_discarded()) v = o.value; // 不是合法 JSON（例如裸字符串）：按字符串处理
+        m_config.setOverride(o.section, o.key, v);
+        LOG_INFO("命令行覆盖配置 {}.{} = {}", o.section, o.key, v.dump());
+    }
     loadSettings();
     if (options.camera) {
         // 只影响这次运行的初始相机，不写回配置
@@ -204,6 +218,12 @@ bool App::init(const LaunchOptions& options) {
     m_terrain.setLayerTextures(loadTerrainLayers());
     rebuildTerrain();
     m_terrain.showLod = options.terrainLod;
+    // 海洋：在半透明阶段画（天空之后），能看到并折射前面画好的地形和物体
+    m_ocean.init(m_device, m_renderer.pipelines(), &m_jobs, Renderer::kSceneColorFormat, Renderer::kDepthFormat);
+    m_ocean.setSettings(m_oceanSettings);
+    m_renderer.addFeature(&m_ocean);
+    if (auto g = m_assetDb.findByPath(fs::resolve("assets/ocean/foam_data.png"))) m_foamTexture = m_assets.loadTexture(*g);
+    else LOG_WARN("缺少 assets/ocean/foam_data.png（泡沫细节贴图），运行 python tools/make_ocean_textures.py 生成");
     for (const std::string& name : options.disabledPasses) {
         m_renderer.graph().passEnabled(name) = false;
         LOG_INFO("已按命令行关闭 pass: {}", name);
@@ -273,6 +293,8 @@ bool App::init(const LaunchOptions& options) {
     ctx.physics = &m_physics;
     ctx.scenePhysics = &m_scenePhysics;
     ctx.regenerateTerrain = [this] { rebuildTerrain(); };
+    ctx.oceanSettings = &m_oceanSettings;
+    ctx.ocean = &m_ocean;
     ctx.worldPanelExtra = [this] { drawPlayerPanel(); };
     m_editor.init(ctx, options.hideUI);
 
@@ -298,6 +320,8 @@ void App::shutdown() {
     if (m_device.device()) vkDeviceWaitIdle(m_device.device());
     m_editor.shutdown(); // 必须在 ImGui 后端关闭之前：要释放视口贴图的 ImGui 描述符
     m_renderer.removeFeature(&m_terrain);
+    m_renderer.removeFeature(&m_ocean);
+    m_ocean.shutdown();
     m_scenePhysics.shutdown(); // 先移除场景刚体，再销毁物理世界
     m_physics.shutdown();
     m_scene.clear();
@@ -321,7 +345,9 @@ void App::loadSettings() {
     m_terrainSettings = m_config.get<terrain::TerrainSettings>("terrain");
     m_physicsSettings = m_config.get<physics::PhysicsSettings>("physics");
     m_playerSettings = m_config.get<PlayerSettings>("player");
+    m_oceanSettings = m_config.get<ocean::OceanSettings>("ocean");
     sanitizeSettings();
+    m_ocean.setSettings(m_oceanSettings);
     // 热加载时只更新「改了立刻能生效」的参数；地形形状要点「重新生成」，物理容量要重启
     m_terrain.setSettings(m_terrainSettings);
     if (m_physics.initialized()) {
@@ -413,6 +439,40 @@ void App::sanitizeSettings() {
     clampSetting(p.minPitchDeg, -89.0f, 89.0f, "player.minPitchDeg");
     clampSetting(p.maxPitchDeg, p.minPitchDeg, 89.0f, "player.maxPitchDeg");
     clampSetting(p.fallLimit, -10000.0f, 0.0f, "player.fallLimit");
+
+    ocean::OceanSettings& o = m_oceanSettings;
+    clampSetting(o.mode, 0, 1, "ocean.mode");
+    clampSetting(o.windSpeed, 0.5f, 40.0f, "ocean.windSpeed");
+    clampSetting(o.fetchKm, 1.0f, 2000.0f, "ocean.fetchKm");
+    clampSetting(o.depth, 1.0f, 2000.0f, "ocean.depth");
+    clampSetting(o.peakEnhancement, 1.0f, 7.0f, "ocean.peakEnhancement");
+    clampSetting(o.spread, 0.0f, 64.0f, "ocean.spread");
+    clampSetting(o.swell, 0.0f, 1.0f, "ocean.swell");
+    clampSetting(o.heightScale, 0.0f, 5.0f, "ocean.heightScale");
+    clampSetting(o.choppiness, 0.0f, 2.0f, "ocean.choppiness");
+    for (int i = 0; i < 3; ++i) clampSetting(o.cascadeSizes[i], 0.5f, 2000.0f, "ocean.cascadeSizes");
+    // 级联必须从大到小：分界按「下一级」的尺寸算，顺序反了会让波数区间重叠或空缺
+    if (!(o.cascadeSizes.x > o.cascadeSizes.y && o.cascadeSizes.y > o.cascadeSizes.z)) {
+        LOG_WARN("配置项 ocean.cascadeSizes 需要从大到小排列，已自动排序");
+        float v[3] = {o.cascadeSizes.x, o.cascadeSizes.y, o.cascadeSizes.z};
+        std::sort(v, v + 3, std::greater<float>());
+        o.cascadeSizes = vec4(v[0], v[1], v[2], 0.0f);
+    }
+    clampSetting(o.foamBias, -1.0f, 2.0f, "ocean.foamBias");
+    clampSetting(o.foamIntensity, 0.0f, 20.0f, "ocean.foamIntensity");
+    clampSetting(o.foamDecay, 0.05f, 30.0f, "ocean.foamDecay");
+    clampSetting(o.shoreFoamWidth, 0.0f, 20.0f, "ocean.shoreFoamWidth");
+    clampSetting(o.foamTiling, 0.1f, 100.0f, "ocean.foamTiling");
+    for (int i = 0; i < 3; ++i) clampSetting(o.absorption[i], 0.0f, 10.0f, "ocean.absorption");
+    clampSetting(o.sssStrength, 0.0f, 10.0f, "ocean.sssStrength");
+    clampSetting(o.roughness, 0.01f, 1.0f, "ocean.roughness");
+    clampSetting(o.refraction, 0.0f, 0.5f, "ocean.refraction");
+    clampSetting(o.reflection, 0.0f, 4.0f, "ocean.reflection");
+    clampSetting(o.gridRings, 8, 1024, "ocean.gridRings");
+    clampSetting(o.gridSegments, 8, 1024, "ocean.gridSegments");
+    clampSetting(o.gridInner, 0.05f, 100.0f, "ocean.gridInner");
+    clampSetting(o.gridOuter, o.gridInner + 1.0f, 50000.0f, "ocean.gridOuter");
+    clampSetting(o.gerstnerWaves, 1, int(ocean::kMaxGerstnerWaves), "ocean.gerstnerWaves");
 }
 
 void App::saveSettings() {
@@ -428,6 +488,7 @@ void App::saveSettings() {
     m_config.set("terrain", m_terrainSettings);
     m_config.set("physics", m_physicsSettings);
     m_config.set("player", m_playerSettings);
+    m_config.set("ocean", m_oceanSettings);
     m_config.save();
 }
 

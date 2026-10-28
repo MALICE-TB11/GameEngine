@@ -43,6 +43,7 @@
 | `--select 名字` | 启动时选中某个实体，例如 `--select ruins/Pillar_R` |
 | `--camera x,y,z,yaw,pitch` | 编辑器相机的初始位置与朝向（度），截图用，例如 `--camera 60,120,260,-110,-22` |
 | `--terrain-lod` | 地形按四叉树级别着色 |
+| `--set section.key=value` | 本次运行临时覆盖一个配置项，可多次使用，例如 `--set ocean.windSpeed=15 --set ocean.mode=0` |
 | `--disable-pass A,B` | 启动时关闭这些 pass（故障演练，例如 `--disable-pass Tonemap,FXAA`），见 [docs/稳定性与故障演练.md](docs/稳定性与故障演练.md) |
 
 常用操作：视口内右键拖动 + WASD/QE 飞行，左键选择，F 聚焦，F1 编辑器/游戏模式，F5/F6 暂停/单步模拟，F9 截图，F12 RenderDoc 捕获，Ctrl+S 保存配置，Ctrl+R 重编 shader。「帮助 → 快捷键与操作」里有完整列表。
@@ -52,6 +53,7 @@
 
 重新生成测试模型：`python tools/make_test_assets.py`（输出 `assets/models/ruins.glb`，已提交到仓库）。
 重新生成地形分层贴图：`python tools/make_terrain_textures.py`（需要 numpy；输出 `assets/terrain/*.png`，已提交到仓库）。
+重新生成泡沫细节贴图：`python tools/make_ocean_textures.py`（输出 `assets/ocean/foam_data.png`）。
 
 **资产**：把 `.glb / .gltf / .png` 放进 `assets/`（或直接拖进编辑器窗口），启动时自动生成 `.meta`（GUID + 导入设置，请一起提交），首次使用时在后台烘焙到 `build/cooked/`（网格优化 + LOD、贴图 BC7/BC5 压缩）。场景保存在 `scenes/*.scene.json`。详见 [docs/04-资源层.md](docs/04-资源层.md)。
 
@@ -75,12 +77,13 @@ physics 只依赖 core（Jolt 是私有依赖）；world 用 physics 做场景�
 | `engine/editor` | 编辑器外壳：菜单、工具栏、状态栏、停靠布局、视口点选、大纲、检视器、环境光照、地形与物理面板 | M3 后 |
 | `engine/terrain` | 程序化岛屿高度场、四叉树 LOD + 裙边、分层材质（高度混合 + 三平面） | M4 |
 | `engine/physics` | PhysicsWorld（封装 Jolt）：形状、刚体、射线、角色控制器 | M4 |
-| `engine/ocean` | 海面模拟与渲染 | M5 |
+| `engine/ocean` | 海浪频谱（JONSWAP/TMA，CPU）、FFT 三级联 / Gerstner 参考实现、泡沫累积、水面着色 | M5 |
 | `engine/medium` | 介质系统 | M6 |
 | `shaders/common` | 帧常量、网格输入、SurfaceData、光照输入、BRDF、着色模型、天空、介质接口、色调映射 | M2–M3 |
 | `shaders/passes` | 全屏 pass（天空、色调映射、FXAA）、阴影深度 | M2–M4 |
 | `shaders/materials` | 材质（PBR、错误材质） | M2–M3 |
 | `shaders/terrain` | 地形顶点生成（SV_VertexID）、分层材质、地形阴影 | M4 |
+| `shaders/ocean` | 频谱演化、groupshared 逆 FFT、泡沫累积、水面着色 | M5 |
 | `sandbox/` | 演示程序：主循环胶水、玩家与第三人称相机 | M1 起 |
 | `config/` | 可热加载的参数（JSON） | M1 起 |
 | `tools/` | 资源生成脚本、界面字形扫描（`update_ui_glyphs.py`） | M3 起 |
@@ -108,6 +111,7 @@ physics 只依赖 core（Jolt 是私有依赖）；world 用 physics 做场景�
 18. [engine/terrain/TerrainQuadtree.cpp](engine/terrain/TerrainQuadtree.cpp) → [shaders/terrain/terrain_common.hlsli](shaders/terrain/terrain_common.hlsli) → [shaders/terrain/terrain.hlsl](shaders/terrain/terrain.hlsl) —— 地形 LOD 与分层材质
 19. [engine/physics/PhysicsWorld.h](engine/physics/PhysicsWorld.h) → [engine/world/ScenePhysics.cpp](engine/world/ScenePhysics.cpp) → [sandbox/Player.cpp](sandbox/Player.cpp) —— 物理封装、场景同步、角色
 20. [docs/稳定性与故障演练.md](docs/稳定性与故障演练.md) → [tests/test_robustness.cpp](tests/test_robustness.cpp) —— 失败时该怎样表现，以及怎样验证
+21. [docs/06-海洋.md](docs/06-海洋.md) → [engine/ocean/OceanSpectrum.cpp](engine/ocean/OceanSpectrum.cpp) → [shaders/ocean/ocean_evolve.hlsl](shaders/ocean/ocean_evolve.hlsl) → [ocean_fft.hlsl](shaders/ocean/ocean_fft.hlsl) → [ocean_surface.hlsl](shaders/ocean/ocean_surface.hlsl) —— 从频谱到水面
 
 ## 里程碑进度
 
@@ -119,7 +123,8 @@ physics 只依赖 core（Jolt 是私有依赖）；world 用 physics 做场景�
 - [x] **M3.5 资源层**：Job 系统、GUID 与 .meta、烘焙（meshoptimizer LOD、BC7/BC5 压缩）、句柄 + 后台加载 + 兜底 + 热重载、场景保存/加载、拖放导入、按实体材质覆盖
 - [x] **M4 地形与物理**：级联阴影（4 级联图集、纹素对齐、法线偏移、PCF）、FXAA、RenderFeature 接口；程序化岛屿高度场、四叉树 LOD + 裙边、分层材质（高度混合、三平面岩石、远近双尺度）；Jolt 物理封装、场景实体自动生成碰撞体（静态网格/动态凸包）、角色控制器 + 第三人称相机
 - [x] **稳定性修整**：场景文件损坏不再被覆盖、材质检视器不再持有悬空指针、后台任务异常不再终止进程、上传与读后读同步、视口默认贴图、地形三表面统一、配置范围检查、故障演练清单与帧时间 P95/P99
-- [ ] M5 海面
+- [x] **M5 海面**：JONSWAP/TMA 频谱、三级联 256² GPU 逆 FFT（优化）与 Gerstner（参考）可切换、雅可比泡沫累积 + 岸边泡沫、菲涅尔反射 + RGB 吸收折射 + 太阳高光 + 浪尖透光；Render Graph 数组/持久贴图
+- [ ] M5 后续：局部交互（波动方程 → 浅水方程）
 - [ ] M6 Medium + 水下 + 材质读取介质
 - [ ] M7 风格化角色材质
 
@@ -131,6 +136,5 @@ physics 只依赖 core（Jolt 是私有依赖）；world 用 physics 做场景�
 
 | 里程碑 | 主要文件（计划） | 风险点 |
 |---|---|---|
-| M5 海面 | `engine/ocean/{OceanSim,Gerstner,FftOcean,OceanPass}`、`shaders/passes/ocean_*.hlsl`、compute 管线 | Render Graph 目前只跟踪图像，FFT 中间缓冲需要加入缓冲跟踪；Gerstner 与 FFT 两套接口一致；海面与地形相交处的泡沫需要深度/水深数据；远处海面的 LOD 与闪烁 |
 | M6 Medium + 水下 | `engine/medium/Medium`、`shaders/common/medium.hlsli`（已预留接口）、水下后处理 pass、浮力 | CPU 端水面高度：FFT 结果在 GPU 上，需要低精度 CPU 近似或异步回读（延迟 2–3 帧），两者取舍需要确认 |
 | M7 toon 角色 | `shaders/common/shading.hlsli` 的 `ShadeToon`、描边 pass、角色材质 | 描边方案（背面外扩 vs 屏幕空间）；toon 与 PBR 在同一光照下的亮度一致性；角色模型资源来源 |
