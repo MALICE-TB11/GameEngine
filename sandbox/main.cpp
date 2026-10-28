@@ -9,12 +9,15 @@
 //   sandbox.exe --scene scenes/x.scene.json     打开指定场景（默认见 config: scene.file）
 //   sandbox.exe --no-ui                         以游戏模式启动：场景全屏、隐藏编辑器（F1 切换）
 //   sandbox.exe --select ruins/Pillar_R         启动时选中某个实体（检视器显示它）
+//   sandbox.exe --camera 0,80,200,-90,-25       编辑器相机初始位置 x,y,z 与朝向 yaw,pitch（度），截图用
+//   sandbox.exe --terrain-lod                   地形按四叉树级别着色（截图/调参用）
 
 #include "App.h"
 
 #include "core/FileSystem.h"
 #include "core/Log.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 
@@ -40,6 +43,14 @@ int main(int argc, char** argv) {
             opts.scene = argv[++i];
         } else if (arg == "--model" && i + 1 < argc) {
             opts.model = argv[++i];
+        } else if (arg == "--camera" && i + 1 < argc) {
+            float v[5] = {0.0f, 0.0f, 0.0f, -90.0f, 0.0f};
+            if (sscanf_s(argv[++i], "%f,%f,%f,%f,%f", &v[0], &v[1], &v[2], &v[3], &v[4]) >= 3)
+                opts.camera = std::array<float, 5>{v[0], v[1], v[2], v[3], v[4]};
+            else
+                LOG_WARN("--camera 格式应为 x,y,z[,yaw,pitch]");
+        } else if (arg == "--terrain-lod") {
+            opts.terrainLod = true;
         } else if (arg == "--renderdoc") {
             opts.renderdoc = true;
         } else if (arg == "--no-renderdoc") {

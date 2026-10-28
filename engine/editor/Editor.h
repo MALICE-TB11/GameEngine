@@ -33,7 +33,13 @@ struct ImVec2;
 namespace eng {
 
 class RenderDocCapture;
+class ScenePhysics;
 namespace rhi { class Device; }
+namespace physics { class PhysicsWorld; }
+namespace terrain {
+struct TerrainSettings;
+class TerrainRenderer;
+} // namespace terrain
 
 // 模拟控制：暂停 / 单步 / 时间缩放。App 在推进固定步长时读取它。
 struct SimulationControl {
@@ -65,6 +71,14 @@ struct EditorContext {
     std::function<void(const std::filesystem::path&)> openScene;       // 打开并设为当前场景
     std::function<void()> newScene;
     std::function<void()> projectSettingsExtra; // 应用自己的参数（显示在「项目设置」末尾）
+    // ---- M4：阴影、地形、物理 ----
+    ShadowSettings* shadowSettings = nullptr;
+    terrain::TerrainSettings* terrainSettings = nullptr;
+    terrain::TerrainRenderer* terrain = nullptr;
+    physics::PhysicsWorld* physics = nullptr;
+    ScenePhysics* scenePhysics = nullptr;
+    std::function<void()> regenerateTerrain; // 用 *terrainSettings 重新生成高度场（渲染 + 碰撞一起更新）
+    std::function<void()> worldPanelExtra;   // 应用自己的信息（玩家状态等），显示在「地形与物理」末尾
 };
 
 class Editor {
@@ -112,6 +126,7 @@ private:
     void drawEnvironmentPanel();
     void drawRenderSettingsPanel();
     void drawProjectSettingsPanel();
+    void drawWorldPanel(); // EditorWorldPanel.cpp：地形生成/LOD/分层材质 + 物理统计
     void drawSaveSceneAsPopup();
     // ---- 操作 ----
     void pickAt(const ImVec2& uv);
@@ -138,7 +153,7 @@ private:
     double m_gameModeEnteredAt = 0.0;
 
     struct Panels {
-        bool outliner = true, assets = true, inspector = true, environment = true, renderSettings = true, project = true;
+        bool outliner = true, assets = true, inspector = true, environment = true, renderSettings = true, project = true, world = true;
         bool console = true, profiler = true, renderGraph = true, shader = true;
     } m_show;
 

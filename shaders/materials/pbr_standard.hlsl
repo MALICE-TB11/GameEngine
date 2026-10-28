@@ -4,6 +4,7 @@
 #include "common/surface.hlsli"
 #include "common/shading.hlsli"
 #include "common/medium.hlsli"
+#include "common/shadow.hlsli"
 
 // set 1：材质贴图（缺失的由 C++ 端绑定默认贴图：白 / 平坦法线）
 [[vk::binding(0, 1)]] Texture2D<float4> gBaseColorTex;  // sRGB，硬件自动转线性
@@ -11,6 +12,7 @@
 [[vk::binding(2, 1)]] Texture2D<float4> gMetalRoughTex; // G = 粗糙度，B = 金属度
 [[vk::binding(3, 1)]] Texture2D<float4> gOcclusionTex;  // R = AO
 [[vk::binding(4, 1)]] Texture2D<float4> gEmissiveTex;   // sRGB
+[[vk::binding(5, 1)]] Texture2D<float> gShadowAtlas;    // 级联阴影图集（Render Graph 管理，关掉阴影时为「处处照亮」）
 
 MeshVSOut VSMain(VSIn i)
 {
@@ -59,6 +61,7 @@ float4 PSMain(MeshVSOut i, bool frontFace : SV_IsFrontFace) : SV_Target
     ApplyMediumToSurface(s, medium);
 
     LightingInputs L = GetLightingInputs();
+    L.sunShadow = SampleSunShadow(gShadowAtlas, s.position, s.geometricNormal);
     float3 color = ShadeSurface(s, L);
     color = ApplyMediumToRadiance(color, s, medium, L);
 

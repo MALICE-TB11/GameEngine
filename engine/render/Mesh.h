@@ -67,6 +67,8 @@ void setMeshVertexInput(rhi::GraphicsState& state);
 MeshData makeCube(float halfExtent = 0.5f);
 MeshData makeUvSphere(float radius, uint32_t segments, uint32_t rings);
 MeshData makePlane(float halfSize, float uvScale = 1.0f);
+// 胶囊：底部在 y = 0、顶部在 y = height（角色用）
+MeshData makeCapsule(float radius, float height, uint32_t segments = 32, uint32_t rings = 16);
 // 由位置/法线/UV 计算切线（glTF 没给切线时使用）
 void computeTangents(MeshData& mesh);
 

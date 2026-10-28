@@ -16,6 +16,7 @@ struct LightingInputs
     float skyIntensity;
     float sunHalo;          // 太阳周围的光晕强度（大气前向散射的近似）
     float ambientIntensity;
+    float sunShadow;        // 太阳可见度：1 = 照亮，0 = 阴影（材质 shader 用 SampleSunShadow 填）
     // EXTEND: 阴影（shadow map 采样结果）、M6 的介质信息（水下吸收、焦散）会加在这里，
     //         所有着色模型自动获得。
 };
@@ -32,5 +33,6 @@ LightingInputs GetLightingInputs()
     L.skyIntensity = gFrame.skyZenith.w;
     L.sunHalo = gFrame.skyHorizon.w;
     L.ambientIntensity = gFrame.exposure.z;
+    L.sunShadow = 1.0;
     return L;
 }

@@ -61,7 +61,23 @@ FetchContent_Declare(meshoptimizer GIT_REPOSITORY https://github.com/zeux/meshop
 FetchContent_Declare(bc7enc GIT_REPOSITORY https://github.com/richgel999/bc7enc_rdo.git
     GIT_TAG b9438627eef73a1157e84201b6fa6eb2ffd6d9f0 SOURCE_SUBDIR _no_cmake)
 
-FetchContent_MakeAvailable(glfw volk vk_bootstrap vma glm spdlog json imgui stb doctest fastgltf meshoptimizer bc7enc)
+# ---- Jolt Physics（M4）：刚体、高度场/网格碰撞、CharacterVirtual -----------------------------
+# Jolt 默认用静态 MSVC 运行库（/MT），与其他依赖（/MD）混用会链接失败，必须关掉。
+# 关掉 IPO（链接时优化）：Debug/Release 构建都快很多，学习项目不需要那点性能。
+set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
+set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
+set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
+set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
+set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
+set(TARGET_VIEWER OFF CACHE BOOL "" FORCE)
+# 用发布版源码压缩包而不是 git 克隆：Jolt 仓库很大，网络不稳时 git 克隆容易中途断开
+FetchContent_Declare(JoltPhysics URL https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.3.0.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE SOURCE_SUBDIR Build)
+
+FetchContent_MakeAvailable(glfw volk vk_bootstrap vma glm spdlog json imgui stb doctest fastgltf meshoptimizer bc7enc JoltPhysics)
+set_target_properties(Jolt PROPERTIES FOLDER external)
 
 add_library(bc7enc STATIC
     ${bc7enc_SOURCE_DIR}/bc7enc.cpp

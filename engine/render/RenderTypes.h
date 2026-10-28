@@ -15,6 +15,8 @@ struct RenderView {
     mat4 view{1.0f};
     mat4 proj{1.0f};
     vec3 position{0.0f};
+    float fovY = 1.0f;     // 弧度；级联阴影需要知道视锥形状
+    float nearPlane = 0.05f;
     double time = 0.0;
     float dt = 0.0f;
 };

@@ -454,6 +454,14 @@ void Editor::drawEntityInspector(Entity& e, EntityId id) {
         e.previous = t;
     }
 
+    theme::sectionHeader("物理");
+    static const char* kPhysicsModes[] = {"无", "静态（三角网格）", "动态（凸包刚体）"};
+    int mode = int(e.physics);
+    if (ImGui::Combo("碰撞", &mode, kPhysicsModes, IM_ARRAYSIZE(kPhysicsModes))) e.physics = PhysicsMode(mode);
+    theme::helpMarker("静态：用模型的三角网格做碰撞体，精确但不能动（建筑、礁石）。\n"
+                      "动态：用模型顶点的凸包，受重力和碰撞驱动（箱子、石块）。\n"
+                      "碰撞体在下一个固定步自动创建；模拟暂停时修改变换，恢复后刚体会瞬移到新位置。");
+
     theme::sectionHeader("模型");
     const asset::AssetStatus st = m_ctx.assets->status(e.model);
     ImGui::Text("%s", m_ctx.assets->name(e.model).c_str());
@@ -580,6 +588,33 @@ void Editor::drawRenderSettingsPanel() {
     c |= ImGui::SliderFloat("LOD 误差阈值", &rs.lodThresholdPx, 0.25f, 16.0f, "%.2f 像素", ImGuiSliderFlags_Logarithmic);
     theme::helpMarker("简化误差投影到屏幕上小于这个像素数时，就使用更粗的 LOD。\n调大可以直观看到远处物体切换 LOD（配合线框模式）。");
     ImGui::TextDisabled("本帧绘制 %.1fk 个三角形", double(m_ctx.scene->lastTriangleCount()) / 1000.0);
+    c |= ImGui::Checkbox("FXAA 抗锯齿", &rs.fxaa);
+    theme::helpMarker("色调映射之后，沿检测到的边缘方向做一次模糊，去掉几何边缘的锯齿。\n代价很低，但会让细小纹理略微变软；M6.5 会换成 TAA。");
+
+    if (m_ctx.shadowSettings) {
+        theme::sectionHeader("太阳阴影（级联）");
+        ShadowSettings& ss = *m_ctx.shadowSettings;
+        bool sc = false;
+        sc |= ImGui::Checkbox("启用", &ss.enabled);
+        sc |= ImGui::SliderFloat("阴影距离", &ss.maxDistance, 20.0f, 500.0f, "%.0f m");
+        sc |= ImGui::SliderFloat("切分 λ", &ss.splitLambda, 0.0f, 1.0f, "%.2f");
+        theme::helpMarker("级联切分 = λ × 对数切分 + (1-λ) × 均匀切分。\nλ 越大，近处级联越小越清晰，远处越粗糙。");
+        sc |= ImGui::SliderFloat("深度偏移", &ss.depthBias, 0.0f, 0.005f, "%.5f");
+        sc |= ImGui::SliderFloat("法线偏移", &ss.normalBias, 0.0f, 5.0f, "%.2f 纹素");
+        theme::helpMarker("阴影痤疮（表面上的条纹）主要靠法线偏移消除；\n太大会让阴影和物体脱开（「彼得潘」现象）。");
+        sc |= ImGui::SliderFloat("PCF 半径", &ss.pcfRadius, 0.0f, 4.0f, "%.1f 纹素");
+        static const int kAtlasSizes[] = {1024, 2048, 4096, 8192};
+        int atlas = 2;
+        for (int i = 0; i < 4; ++i)
+            if (int(ss.atlasSize) == kAtlasSizes[i]) atlas = i;
+        if (ImGui::Combo("图集尺寸", &atlas, "1024\0" "2048\0" "4096\0" "8192\0")) {
+            ss.atlasSize = uint32_t(kAtlasSizes[atlas]);
+            sc = true;
+        }
+        const ShadowCascades& cas = m_ctx.renderer->cascades();
+        ImGui::TextDisabled("级联边界 %.1f / %.1f / %.1f / %.1f m", cas.splits.x, cas.splits.y, cas.splits.z, cas.splits.w);
+        if (sc) m_ctx.renderer->setShadowSettings(ss);
+    }
 
     theme::sectionHeader("视图模式");
     for (int i = 0; i < IM_ARRAYSIZE(kDebugViewNames); ++i) {

@@ -134,6 +134,7 @@ SceneDesc Scene::toDesc() const {
         ed.instance = e.instance;
         ed.visible = e.visible;
         ed.material = e.materialOverride;
+        ed.physics = e.physics;
         d.entities.push_back(std::move(ed));
     }
     return d;
@@ -155,6 +156,7 @@ void Scene::fromDesc(const SceneDesc& desc) {
         e.instance = ed.instance;
         e.visible = ed.visible;
         e.materialOverride = ed.material;
+        e.physics = ed.physics;
         add(std::move(e));
     }
 }

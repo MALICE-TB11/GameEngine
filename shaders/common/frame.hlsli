@@ -19,6 +19,11 @@ struct FrameConstants
     float4 groundColor;  // rgb = 地面反弹颜色
     float4 exposure;     // x = 曝光，y = 色调映射模式，z = 环境光强度
     float4 debug;        // x = 调试视图
+    // ---- 级联阴影（见 common/shadow.hlsli） ----
+    float4x4 shadowViewProj[4];
+    float4 cascadeSplits;
+    float4 cascadeTexel;
+    float4 shadowParams; // x = 深度偏移，y = 法线偏移（纹素），z = PCF 半径（纹素），w = 是否启用
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<FrameConstants> gFrame;
@@ -26,3 +31,4 @@ struct FrameConstants
 [[vk::binding(1, 0)]] SamplerState gLinearWrap;  // 材质贴图（16x 各向异性）
 [[vk::binding(2, 0)]] SamplerState gLinearClamp; // 全屏后处理
 [[vk::binding(3, 0)]] SamplerState gPointClamp;  // 精确取像素
+[[vk::binding(4, 0)]] SamplerComparisonState gShadowSampler; // 阴影比较采样（硬件 2×2 PCF）

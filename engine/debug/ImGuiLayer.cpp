@@ -19,7 +19,7 @@ std::string g_iniPath; // ImGui 只保存指针，字符串必须一直活着
 
 std::filesystem::path ImGuiLayer::layoutIniPath() {
     // 文件名带版本：停靠布局改版后换个名字，旧的浮动窗口布局不会干扰新布局
-    return fs::projectRoot() / "build" / "imgui_editor_v1.ini";
+    return fs::projectRoot() / "build" / "imgui_editor_v2.ini"; // v2：M4 新增「地形与物理」面板
 }
 
 bool ImGuiLayer::init(rhi::Device& device, Window& window, VkFormat colorFormat, uint32_t imageCount) {

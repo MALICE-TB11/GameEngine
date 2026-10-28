@@ -100,6 +100,39 @@ MeshData makeUvSphere(float radius, uint32_t segments, uint32_t rings) {
     return m;
 }
 
+MeshData makeCapsule(float radius, float height, uint32_t segments, uint32_t rings) {
+    // 球从赤道切开，上半球抬高、下半球放低，中间用一圈重复的赤道顶点连成圆柱。
+    // 底部在 y = 0（与角色控制器「位置 = 脚底」的约定一致）
+    MeshData m;
+    rings += rings & 1u; // 环数取偶数，赤道正好落在一环上
+    const float halfCylinder = std::max(height * 0.5f - radius, 0.0f);
+    const float center = height * 0.5f;
+    for (uint32_t r = 0; r <= rings + 1; ++r) {
+        // 第 rings/2 环和第 rings/2+1 环都是赤道：前者属于上半球，后者属于下半球
+        const uint32_t ring = r <= rings / 2 ? r : r - 1;
+        const float phi = float(ring) / float(rings) * kPi;
+        const float yOffset = r <= rings / 2 ? halfCylinder : -halfCylinder;
+        for (uint32_t s = 0; s <= segments; ++s) {
+            const float u = float(s) / float(segments);
+            const float theta = u * 2.0f * kPi;
+            const vec3 n{std::sin(phi) * std::cos(theta), std::cos(phi), -std::sin(phi) * std::sin(theta)};
+            Vertex vert;
+            vert.position = n * radius + vec3(0.0f, center + yOffset, 0.0f);
+            vert.normal = n;
+            vert.uv = {u, vert.position.y / std::max(height, 1e-3f)};
+            vert.tangent = vec4(-std::sin(theta), 0.0f, -std::cos(theta), 1.0f);
+            m.vertices.push_back(vert);
+        }
+    }
+    const uint32_t stride = segments + 1;
+    for (uint32_t r = 0; r <= rings; ++r)
+        for (uint32_t s = 0; s < segments; ++s) {
+            const uint32_t a = r * stride + s, b = a + stride;
+            m.indices.insert(m.indices.end(), {a, b, a + 1, a + 1, b, b + 1});
+        }
+    return m;
+}
+
 MeshData makePlane(float halfSize, float uvScale) {
     MeshData m;
     const vec2 corners[4] = {{-1, 1}, {1, 1}, {1, -1}, {-1, -1}};

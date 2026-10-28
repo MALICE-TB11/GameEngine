@@ -62,6 +62,35 @@ void DefaultResources::init(rhi::Device& device) {
     m_linearWrap = makeSampler(device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, 16.0f, "LinearWrapAniso");
     m_linearClamp = makeSampler(device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 1.0f, "LinearClamp");
     m_pointClamp = makeSampler(device, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 1.0f, "PointClamp");
+
+    // 比较采样器：线性过滤 + 比较 = 硬件对 2×2 个深度分别比较后再插值（免费的 2×2 PCF）
+    VkSamplerCreateInfo sc{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    sc.magFilter = sc.minFilter = VK_FILTER_LINEAR;
+    sc.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sc.addressModeU = sc.addressModeV = sc.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sc.compareEnable = VK_TRUE;
+    sc.compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL; // 参考值（片元深度）≥ 图中深度 → 照亮
+    sc.maxLod = 0.0f;
+    ENG_CHECK_VK(vkCreateSampler(device.device(), &sc, nullptr, &m_shadowCompare));
+    rhi::setDebugName(device.device(), m_shadowCompare, "ShadowCompare");
+
+    // 深度 = 0 的 1×1 深度图（清除后转成着色器只读）
+    rhi::ImageDesc dd;
+    dd.format = VK_FORMAT_D32_SFLOAT;
+    dd.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    dd.name = "DefaultDepthFar";
+    m_depthFar = rhi::createImage(device, dd);
+    device.immediateSubmit([&](VkCommandBuffer cmd) {
+        const rhi::ImageState undefined{VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE, VK_IMAGE_LAYOUT_UNDEFINED};
+        const rhi::ImageState dst{VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL};
+        const rhi::ImageState read{VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        rhi::imageBarrier(cmd, m_depthFar.image, VK_IMAGE_ASPECT_DEPTH_BIT, undefined, dst);
+        const VkClearDepthStencilValue zero{0.0f, 0};
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        vkCmdClearDepthStencilImage(cmd, m_depthFar.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &range);
+        rhi::imageBarrier(cmd, m_depthFar.image, VK_IMAGE_ASPECT_DEPTH_BIT, dst, read);
+    });
 }
 
 void DefaultResources::shutdown() {
@@ -70,6 +99,8 @@ void DefaultResources::shutdown() {
     vkDestroySampler(dev, m_linearWrap, nullptr);
     vkDestroySampler(dev, m_linearClamp, nullptr);
     vkDestroySampler(dev, m_pointClamp, nullptr);
+    vkDestroySampler(dev, m_shadowCompare, nullptr);
+    rhi::destroyImage(*m_device, m_depthFar);
     rhi::destroyImage(*m_device, m_black);
     rhi::destroyImage(*m_device, m_white);
     rhi::destroyImage(*m_device, m_flatNormal);

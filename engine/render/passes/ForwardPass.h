@@ -17,7 +17,10 @@ class ForwardPass {
 public:
     void init(rhi::Device& device, PipelineCache& pipelines, VkFormat colorFormat, VkFormat depthFormat);
     void shutdown();
-    void add(rg::RenderGraph& graph, rg::TextureHandle color, rg::TextureHandle depth, const DrawList& draws);
+    // color/depth 用 LOAD：地形等特性 pass 先画（并负责清屏）；没有特性时 Render Graph 自动把 LOAD 改成 CLEAR
+    void add(rg::RenderGraph& graph, rg::TextureHandle color, rg::TextureHandle depth, rg::TextureHandle shadowAtlas,
+             const DrawList& draws);
+    VkDescriptorSetLayout materialSetLayout() const { return m_setLayout; }
 
     bool wireframe = false;
     Material defaultMaterial; // DrawItem::material 为空时使用

@@ -295,6 +295,7 @@ VkImageView RenderGraph::fallbackView(Fallback f) const {
     switch (f) {
     case Fallback::White: return m_defaults->white().view;
     case Fallback::FlatNormal: return m_defaults->flatNormal().view;
+    case Fallback::DepthFar: return m_defaults->depthFar().view;
     default: return m_defaults->black().view;
     }
 }

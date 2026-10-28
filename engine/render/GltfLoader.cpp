@@ -215,8 +215,17 @@ Model uploadModel(rhi::Device& device, const ModelData& data) {
             if (md.textures[s] >= 0 && size_t(md.textures[s]) < model.textures.size()) *slots[s] = &model.textures[md.textures[s]];
         model.materials.push_back(std::move(m));
     }
-    for (size_t i = 0; i < data.meshes.size(); ++i)
-        model.meshes.push_back(uploadMesh(device, data.meshes[i], i < data.meshNames.size() ? data.meshNames[i] : data.name));
+    for (size_t i = 0; i < data.meshes.size(); ++i) {
+        const MeshData& md = data.meshes[i];
+        model.meshes.push_back(uploadMesh(device, md, i < data.meshNames.size() ? data.meshNames[i] : data.name));
+        // 碰撞几何：只留位置和 LOD0 的索引（物理不需要法线/UV）
+        CollisionMesh& c = model.collision.emplace_back();
+        c.positions.reserve(md.vertices.size());
+        for (const Vertex& v : md.vertices) c.positions.push_back(v.position);
+        const uint32_t count = md.lods.empty() ? uint32_t(md.indices.size()) : md.lods[0].indexCount;
+        const uint32_t first = md.lods.empty() ? 0u : md.lods[0].firstIndex;
+        c.indices.assign(md.indices.begin() + first, md.indices.begin() + first + count);
+    }
     model.instances = data.instances;
     for (const ModelInstance& inst : model.instances) {
         if (inst.mesh >= model.meshes.size()) continue;

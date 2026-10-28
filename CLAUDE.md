@@ -26,6 +26,8 @@ core ← platform ← rhi ← render ← asset ← 特性模块(terrain / ocean 
 math 只依赖 GLM，任何层都可用；debug 可依赖 render；editor 在最上层，引擎其他模块都不依赖它
 ```
 - 特性模块之间**不互相 include**，通过 `medium/`、`world/` 的共享接口交流。
+- `physics` 只依赖 `core`，Jolt 是 PRIVATE 依赖：**公开头文件里不出现 Jolt 类型**（PIMPL）。`world` 依赖 `physics` 做场景同步（`ScenePhysics`）。
+- 特性模块（地形、海洋……）实现 `RenderFeature`，由 App 注册给 Renderer；Renderer 不 include 任何特性模块。
 - 新文件放到对应模块目录，CMake target 名为 `engine_<module>`。
 
 ## 容错约定
@@ -52,7 +54,10 @@ validation layer（Debug 默认开）、所有 Vulkan 对象 debug name、Render
 - 场景/玩法代码通过 `ModelHandle` + 实例号引用模型，**不要保存 `GpuMesh*` / `Material*`**（热重载后会悬空）。
 - 后台线程（Job）不碰 GPU 和场景；需要上传或修改场景时用 `JobSystem::runOnMainThread`。
 - 新增渲染 pass：在 `engine/render/passes/` 建文件（init 建管线，add 声明读写），在 `Renderer::buildGraph` 中按顺序调用；不要手写 barrier。
-- 新增材质：只写「填 SurfaceData」的部分，光照统一调用 `ShadeSurface`，介质统一调用 `medium.hlsli`。
+- 新增材质：只写「填 SurfaceData」的部分，光照统一调用 `ShadeSurface`，阴影统一调用 `SampleSunShadow`，介质统一调用 `medium.hlsli`。
+- 场景实体的物理只设 `Entity::physics`（none/static/dynamic），刚体由 `ScenePhysics` 自动创建与同步；不要在玩法代码里手动给场景实体建刚体。
+- 地形高度只有一份（`terrain::Heightfield`）：渲染、物理、玩法查询都从它来，不要另建一份「近似高度」。
+- 贴图用途按文件名后缀推断（`_n` 法线、`_data/_orm/_mask` 数据，其余颜色），猜错了改 `.meta`。
 - 命名：类型 `PascalCase`，函数 `camelCase`，成员 `m_` 前缀，常量 `kName`，命名空间 `eng`。
 - 错误处理：可恢复错误返回 `Result`/`bool` 并记日志；不可恢复用 `ENG_ASSERT`/`ENG_CHECK_VK`。
 

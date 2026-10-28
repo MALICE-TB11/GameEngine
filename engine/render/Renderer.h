@@ -18,9 +18,13 @@
 #include "render/FrameConstants.h"
 #include "render/Lighting.h"
 #include "render/PipelineCache.h"
+#include "render/RenderFeature.h"
 #include "render/RenderGraph.h"
 #include "render/RenderTypes.h"
+#include "render/Shadows.h"
 #include "render/passes/ForwardPass.h"
+#include "render/passes/FxaaPass.h"
+#include "render/passes/ShadowPass.h"
 #include "render/passes/SkyPass.h"
 #include "render/passes/TonemapPass.h"
 #include "rhi/Descriptors.h"
@@ -44,6 +48,7 @@ struct RendererSettings {
     vec4 clearColor{0.02f, 0.05f, 0.08f, 1.0f}; // Sky pass 关闭时的背景（线性 HDR 值）
     int debugView = int(DebugView::None);
     float lodThresholdPx = 1.0f; // LOD 误差投影到屏幕上允许的像素数：越大越早切到粗模型
+    bool fxaa = true;            // 色调映射后做 FXAA 抗锯齿
 };
 
 class Renderer {
@@ -59,6 +64,13 @@ public:
     const RendererSettings& settings() const { return m_settings; }
     void setLighting(const LightingSettings& l) { m_lighting = l; }
     const LightingSettings& lighting() const { return m_lighting; }
+    void setShadowSettings(const ShadowSettings& s) { m_shadowSettings = s; }
+    const ShadowSettings& shadowSettings() const { return m_shadowSettings; }
+    const ShadowCascades& cascades() const { return m_cascades; }
+
+    // 特性模块（地形、海洋……）注册后，渲染器在固定阶段调用它们添加 pass（见 RenderFeature.h）
+    void addFeature(RenderFeature* feature) { m_features.push_back(feature); }
+    void removeFeature(RenderFeature* feature) { std::erase(m_features, feature); }
 
     // 在最终画面上叠加 UI（ImGui）。回调在 dynamic rendering 作用域内调用，目标是交换链图像。
     using OverlayFn = std::function<void(VkCommandBuffer)>;
@@ -123,8 +135,14 @@ private:
     VkDescriptorPool m_globalPool = VK_NULL_HANDLE;
 
     ForwardPass m_forward;
+    ShadowPass m_shadowPass;
     SkyPass m_sky;
     TonemapPass m_tonemap;
+    FxaaPass m_fxaa;
+    ShadowSettings m_shadowSettings;
+    ShadowCascades m_cascades;
+    std::vector<RenderFeature*> m_features;
+    const RenderView* m_currentView = nullptr;
 
     std::filesystem::path m_capturePath;
     rhi::Buffer m_captureBuffer;

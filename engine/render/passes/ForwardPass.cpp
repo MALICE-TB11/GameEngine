@@ -20,7 +20,8 @@ void ForwardPass::init(rhi::Device& device, PipelineCache& pipelines, VkFormat c
     auto tex = [](uint32_t b) {
         return VkDescriptorSetLayoutBinding{b, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
     };
-    m_setLayout = rhi::createSetLayout(device, {tex(0), tex(1), tex(2), tex(3), tex(4)}, "MaterialSetLayout");
+    // binding 5 = 阴影图集：每个材质集都带上它，阴影 pass 被关掉时 ctx.view() 自动换成「处处照亮」的默认图
+    m_setLayout = rhi::createSetLayout(device, {tex(0), tex(1), tex(2), tex(3), tex(4), tex(5)}, "MaterialSetLayout");
 
     GraphicsPipelineDesc d;
     d.state.colorFormats = {colorFormat};
@@ -66,17 +67,20 @@ PipelineHandle ForwardPass::pipelineFor(const Material& m) const {
     return m_pipelines->ready(wanted) ? wanted : m_error;
 }
 
-void ForwardPass::add(rg::RenderGraph& graph, rg::TextureHandle color, rg::TextureHandle depth, const DrawList& draws) {
+void ForwardPass::add(rg::RenderGraph& graph, rg::TextureHandle color, rg::TextureHandle depth, rg::TextureHandle shadowAtlas,
+                      const DrawList& draws) {
     graph.addPass("Forward", rg::PassType::Graphics)
-        .color(color, rg::LoadOp::Clear)
-        .depth(depth, rg::LoadOp::Clear)
+        .color(color, rg::LoadOp::Load)
+        .depth(depth, rg::LoadOp::Load)
+        .sampled(shadowAtlas)
         // 正常管线和错误管线至少有一个能用才执行；都坏了就跳过，下游读到默认黑图
         .require([this] { return m_pipelines->ready(m_pbr) || m_pipelines->ready(m_error); })
-        .execute([this, &draws](rg::PassContext& ctx) {
+        .execute([this, &draws, shadowAtlas](rg::PassContext& ctx) {
             const DefaultResources& def = *ctx.frame->defaults;
+            const VkImageView shadowView = ctx.view(shadowAtlas);
             // 同一帧里同一材质只分配并写一次描述符集
             std::unordered_map<const Material*, VkDescriptorSet> sets;
-            auto materialSet = [&](const Material& m) {
+            auto materialSet = [&, shadowView](const Material& m) {
                 if (auto it = sets.find(&m); it != sets.end()) return it->second;
                 VkDescriptorSet set = ctx.frame->descriptors->allocate(m_setLayout);
                 auto view = [](const rhi::Image* img, const rhi::Image& fallback) { return img ? img->view : fallback.view; };
@@ -86,6 +90,7 @@ void ForwardPass::add(rg::RenderGraph& graph, rg::TextureHandle color, rg::Textu
                     .sampledImage(2, view(m.metalRoughTex, def.white())) // 白 = 粗糙度/金属度由参数决定
                     .sampledImage(3, view(m.occlusionTex, def.white()))  // 白 = 无遮蔽
                     .sampledImage(4, view(m.emissiveTex, def.white()))   // 白 × emissive 参数
+                    .sampledImage(5, shadowView)
                     .update(ctx.frame->device, set);
                 sets.emplace(&m, set);
                 return set;

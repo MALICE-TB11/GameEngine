@@ -61,8 +61,10 @@ bool Renderer::init(rhi::Device& device, Window& window, const RendererSettings&
     m_profiler.init(device);
 
     m_forward.init(device, m_pipelines, kSceneColorFormat, kDepthFormat);
+    m_shadowPass.init(m_pipelines, kDepthFormat);
     m_sky.init(m_pipelines, kSceneColorFormat, kDepthFormat);
     m_tonemap.init(device, m_pipelines, m_swapchain.format());
+    m_fxaa.init(device, m_pipelines, m_swapchain.format());
     return true;
 }
 
@@ -72,17 +74,19 @@ void Renderer::createGlobalDescriptors() {
     const VkSampler linearWrap = m_defaults.linearWrap();
     const VkSampler linearClamp = m_defaults.linearClamp();
     const VkSampler pointClamp = m_defaults.pointClamp();
+    const VkSampler shadowCompare = m_defaults.shadowCompare();
     m_globalLayout = rhi::createSetLayout(*m_device,
                                           {
                                               {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr},
                                               {1, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_ALL, &linearWrap},
                                               {2, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_ALL, &linearClamp},
                                               {3, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_ALL, &pointClamp},
+                                              {4, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_ALL, &shadowCompare},
                                           },
                                           "GlobalSetLayout");
 
     const VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, rhi::kFramesInFlight},
-                                          {VK_DESCRIPTOR_TYPE_SAMPLER, 3 * rhi::kFramesInFlight}};
+                                          {VK_DESCRIPTOR_TYPE_SAMPLER, 4 * rhi::kFramesInFlight}};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = rhi::kFramesInFlight;
     pci.poolSizeCount = 2;
@@ -108,6 +112,7 @@ void Renderer::shutdown() {
     vkDeviceWaitIdle(dev);
     m_device->flushDeferred();
     m_tonemap.shutdown();
+    m_fxaa.shutdown();
     m_forward.shutdown();
     m_profiler.shutdown();
     m_graph.shutdown();
@@ -153,6 +158,16 @@ void Renderer::updateFrameConstants(FrameResources& frame, const RenderView& vie
     c.groundColor = vec4(L.groundColor, 0.0f);
     c.exposure = vec4(L.exposure, float(L.tonemapper), L.ambientIntensity, 0.0f);
     c.debug = vec4(float(m_settings.debugView), 0.0f, 0.0f, 0.0f);
+
+    // 级联阴影：每帧根据相机视锥与太阳方向重新计算
+    m_cascades = computeCascades(view.view, view.fovY, float(e.width) / float(std::max(e.height, 1u)), view.nearPlane,
+                                 L.sunDirection(), m_shadowSettings);
+    for (uint32_t i = 0; i < kShadowCascades; ++i) c.shadowViewProj[i] = m_cascades.viewProj[i];
+    c.cascadeSplits = m_cascades.splits;
+    c.cascadeTexel = m_cascades.texelWorldSize;
+    // 太阳落到地平线以下时没有直射光，也就不需要阴影
+    const bool shadowsOn = m_shadowSettings.enabled && L.sunElevationDeg > -2.0f;
+    c.shadowParams = vec4(m_shadowSettings.depthBias, m_shadowSettings.normalBias, m_shadowSettings.pcfRadius, shadowsOn ? 1.0f : 0.0f);
     std::memcpy(frame.constants.mapped, &c, sizeof(c));
     // Upload 内存可能不是 HOST_COHERENT：flush 保证 GPU 看到 CPU 的写入
     vmaFlushAllocation(m_device->allocator(), frame.constants.allocation, 0, VK_WHOLE_SIZE);
@@ -196,6 +211,7 @@ bool Renderer::drawFrame(const RenderView& view, const DrawList& draws) {
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     ENG_CHECK_VK(vkBeginCommandBuffer(frame.cmd, &bi));
 
+    m_currentView = &view;
     buildGraph(imageIndex, draws);
     FrameContext ctx;
     ctx.slot = slot;
@@ -312,24 +328,66 @@ void Renderer::buildGraph(uint32_t imageIndex, const DrawList& draws) {
     depthDesc.clear.depthStencil = {0.0f, 0}; // reverse-Z：0 = 无穷远
     const rg::TextureHandle depth = m_graph.createTexture(depthDesc);
 
+    // 阴影图集：4 个级联各占一个象限。关掉阴影 pass 时，读取它的 pass 自动拿到「深度 0」的默认图 → 处处照亮
+    rg::TextureDesc shadowDesc;
+    shadowDesc.name = "ShadowAtlas";
+    shadowDesc.format = kDepthFormat;
+    shadowDesc.width = shadowDesc.height = m_shadowSettings.atlasSize;
+    shadowDesc.fallback = rg::Fallback::DepthFar;
+    shadowDesc.clear.depthStencil = {0.0f, 0};
+    const rg::TextureHandle shadowAtlas = m_graph.createTexture(shadowDesc);
+
+    SceneTargets targets;
+    targets.color = sceneColor;
+    targets.depth = depth;
+    targets.shadowAtlas = shadowAtlas;
+    targets.cascades = &m_cascades;
+    targets.shadowSettings = &m_shadowSettings;
+    targets.view = m_currentView;
+    targets.sceneExtent = scene;
+
     // ---- pass 顺序 = 执行顺序 ----
-    m_forward.add(m_graph, sceneColor, depth, draws);
+    // 1. 阴影：网格 → 各特性（地形……）
+    if (m_shadowSettings.enabled) {
+        m_shadowPass.add(m_graph, shadowAtlas, draws);
+        for (RenderFeature* f : m_features) f->addShadowPasses(m_graph, targets);
+    }
+    // 2. 不透明：各特性先画（第一个写入者负责清屏），再画网格
+    for (RenderFeature* f : m_features) f->addOpaquePasses(m_graph, targets);
+    m_forward.add(m_graph, sceneColor, depth, shadowAtlas, draws);
+    // 3. 天空填充剩余像素；4. 半透明（水面……）
     m_sky.add(m_graph, sceneColor, depth);
+    for (RenderFeature* f : m_features) f->addTransparentPasses(m_graph, targets);
+
+    // 5. 色调映射（+ FXAA）→ 输出（编辑器视口贴图或交换链）
+    const rg::TextureHandle output =
+        m_viewportOutput ? m_graph.createTexture(viewportDesc(m_swapchain.format(), scene)) : backbuffer;
+    if (m_settings.fxaa) {
+        rg::TextureDesc ldrDesc;
+        ldrDesc.name = "LDR";
+        ldrDesc.format = m_swapchain.format();
+        ldrDesc.width = scene.width;
+        ldrDesc.height = scene.height;
+        const rg::TextureHandle ldr = m_graph.createTexture(ldrDesc);
+        m_tonemap.add(m_graph, sceneColor, ldr);
+        m_fxaa.add(m_graph, ldr, output);
+    } else {
+        m_tonemap.add(m_graph, sceneColor, output);
+    }
+
+    // 6. 界面
     if (m_viewportOutput) {
-        // 编辑器模式：tonemap → 视口贴图；UI pass 采样它（ImGui::Image）并画整个编辑器界面。
+        // 编辑器模式：UI pass 采样视口贴图（ImGui::Image）并画整个编辑器界面。
         // 「采样」声明让图在 UI 之前把视口贴图转成 SHADER_READ_ONLY 布局。
-        const rg::TextureHandle viewport = m_graph.createTexture(viewportDesc(m_swapchain.format(), scene));
-        m_tonemap.add(m_graph, sceneColor, viewport);
         m_graph.addPass("UI", rg::PassType::Graphics)
-            .sampled(viewport)
+            .sampled(output)
             .color(backbuffer, rg::LoadOp::Clear)
             .execute([this](rg::PassContext& ctx) {
                 if (m_overlay) m_overlay(ctx.cmd);
             });
     } else {
-        m_tonemap.add(m_graph, sceneColor, backbuffer);
         m_graph.addPass("UI", rg::PassType::Graphics)
-            .color(backbuffer, rg::LoadOp::Load) // 叠加在 tonemap 结果上；若 tonemap 被关，图会自动改成 CLEAR
+            .color(backbuffer, rg::LoadOp::Load) // 叠加在场景上；若前面的 pass 都被关，图会自动改成 CLEAR
             .execute([this](rg::PassContext& ctx) {
                 if (m_overlay) m_overlay(ctx.cmd);
             });

@@ -13,6 +13,7 @@ inline constexpr const char* kInspectorWindow = "◉ 检视器###Inspector";
 inline constexpr const char* kEnvironmentWindow = "☀ 环境光照###Environment";
 inline constexpr const char* kRenderSettingsWindow = "◐ 渲染设置###RenderSettings";
 inline constexpr const char* kProjectWindow = "⚙ 项目设置###Project";
+inline constexpr const char* kWorldWindow = "▲ 地形与物理###World";
 
 inline constexpr const char* kDebugViewNames[] = {"正常光照", "法线", "Albedo", "粗糙度", "金属度", "AO"};
 inline constexpr const char* kTonemapperNames[] = {"ACES（Hill 拟合）", "AgX", "无（直接截断）"};

@@ -7,8 +7,9 @@
 //   - 场景文件只需要记录「哪个资产（GUID）的第几个实例」
 // 材质参数可以按实体覆盖（materialOverride），不影响其他使用同一模型的实体。
 //
-// 刻意不做 ECS：现阶段实体只有「变换 + 模型引用 + 材质覆盖」，一个结构体数组最直白。
-// EXTEND: M4 给实体加 PhysicsWorld 的刚体句柄；实体类型变多时再考虑组件化。
+// 刻意不做 ECS：现阶段实体只有「变换 + 模型引用 + 材质覆盖 + 物理模式」，一个结构体数组最直白。
+// 物理：实体只声明「要不要参与物理、静态还是动态」，刚体由 ScenePhysics 自动创建和同步。
+// EXTEND: 实体类型变多（触发器、灯光、音源……）时再考虑组件化。
 
 #include "asset/AssetManager.h"
 #include "math/Transform.h"
@@ -32,6 +33,8 @@ struct Entity {
     uint32_t instance = 0; // 模型中的第几个实例（glTF 的节点 × primitive）
     std::optional<MaterialParams> materialOverride;
     bool visible = true;
+    PhysicsMode physics = PhysicsMode::None;
+    uint32_t physicsSlot = UINT32_MAX; // ScenePhysics 内部记录的下标（运行时数据，不保存）
 };
 
 // LOD 选择需要的相机信息

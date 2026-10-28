@@ -61,11 +61,18 @@ struct ModelData {
     std::vector<ModelInstance> instances;
 };
 
+// 网格的 CPU 端碰撞几何（模型空间）：物理模块据此建三角网格（静态）或凸包（动态）碰撞体
+struct CollisionMesh {
+    std::vector<vec3> positions;
+    std::vector<uint32_t> indices;
+};
+
 struct Model {
     using Instance = ModelInstance;
 
     std::string name;
     std::vector<GpuMesh> meshes;
+    std::vector<CollisionMesh> collision; // 与 meshes 一一对应
     std::vector<Material> materials;
     std::vector<rhi::Image> textures; // 加载完成后不再增删：Material 里存的是指向它的指针
     std::vector<Instance> instances;

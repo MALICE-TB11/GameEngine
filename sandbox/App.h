@@ -10,15 +10,21 @@
 #include "debug/ImGuiLayer.h"
 #include "debug/RenderDocCapture.h"
 #include "editor/Editor.h"
+#include "Player.h"
 #include "math/Transform.h"
+#include "physics/PhysicsWorld.h"
 #include "platform/Input.h"
 #include "platform/Window.h"
 #include "render/Camera.h"
 #include "render/Lighting.h"
 #include "render/Renderer.h"
 #include "rhi/Device.h"
+#include "terrain/Heightfield.h"
+#include "terrain/TerrainRenderer.h"
 #include "world/Scene.h"
+#include "world/ScenePhysics.h"
 
+#include <array>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -34,6 +40,8 @@ struct LaunchOptions {
     std::string scene;                  // --scene scenes/x.scene.json：打开指定场景
     bool hideUI = false;                // --no-ui：以游戏模式启动（场景全屏，F1 切回编辑器）
     std::string select;                 // --select 名字：启动时选中该实体（截图/演示用）
+    std::optional<std::array<float, 5>> camera; // --camera x,y,z,yaw,pitch：编辑器相机初始位置（截图用）
+    bool terrainLod = false;            // --terrain-lod：地形按四叉树级别着色
 };
 
 struct DebugSettings {
@@ -41,7 +49,7 @@ struct DebugSettings {
 };
 
 struct SceneSettings {
-    std::string file = "scenes/demo.scene.json"; // 启动时打开的场景
+    std::string file = "scenes/island.scene.json"; // 启动时打开的场景
     float spinSpeedDeg = 45.0f;
 };
 
@@ -61,16 +69,26 @@ private:
     void waitForModel(ModelHandle h);
     void fixedUpdate(double dt);
     void updateCamera(double dt);
+    // 按 m_terrainSettings 生成高度场 → 上传渲染 → 重建地形碰撞体
+    void rebuildTerrain();
+    terrain::TerrainLayerTextures loadTerrainLayers();
+    void applyPlayerSettings(); // 出生点高度按地形修正后交给 Player
+    void addPlayerDraw(float alpha);
+    void drawPlayerPanel();
 
     LaunchOptions m_options;
     ConfigFile m_config;
     WindowSettings m_windowSettings;
     RendererSettings m_rendererSettings;
+    ShadowSettings m_shadowSettings;
     LightingSettings m_lighting;
     FixedStepSettings m_loopSettings;
     CameraSettings m_cameraSettings;
     DebugSettings m_debugSettings;
     SceneSettings m_sceneSettings;
+    terrain::TerrainSettings m_terrainSettings;
+    physics::PhysicsSettings m_physicsSettings;
+    PlayerSettings m_playerSettings;
 
     Window m_window;
     Input m_input;
@@ -92,6 +110,16 @@ private:
     std::filesystem::path m_scenePath;
     DrawList m_drawList;
     RenderView m_view;
+
+    // ---- M4：地形 + 物理 + 玩家 ----
+    terrain::Heightfield m_heightfield;
+    terrain::TerrainRenderer m_terrain;
+    physics::PhysicsWorld m_physics;
+    ScenePhysics m_scenePhysics;
+    physics::ShapeId m_terrainShape;
+    physics::BodyId m_terrainBody;
+    Player m_player;
+    MaterialParams m_playerMaterial;
 };
 
 } // namespace eng

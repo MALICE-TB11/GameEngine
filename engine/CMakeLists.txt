@@ -69,9 +69,12 @@ engine_module(render
         render/Mesh.cpp
         render/Camera.cpp
         render/GltfLoader.cpp
+        render/Shadows.cpp
         render/passes/ForwardPass.cpp
+        render/passes/ShadowPass.cpp
         render/passes/SkyPass.cpp
         render/passes/TonemapPass.cpp
+        render/passes/FxaaPass.cpp
     DEPS engine_rhi
     PRIVATE_DEPS fastgltf::fastgltf)
 # 运行时热重载调用 dxc 的参数：与 cmake/Shaders.cmake 的构建时参数共用同一份定义
@@ -93,12 +96,29 @@ engine_module(asset
     DEPS engine_render
     PRIVATE_DEPS meshoptimizer bc7enc)
 
-# ---- world：场景/实体 ----------------------------------------------------------------------
+# ---- physics：Jolt Physics 的封装（M4） -----------------------------------------------------
+# 只依赖 core：公开头文件里没有 Jolt 类型（PIMPL），Jolt 作为 PRIVATE 依赖不会传染给上层模块。
+engine_module(physics
+    SOURCES
+        physics/PhysicsWorld.cpp
+    DEPS engine_core
+    PRIVATE_DEPS Jolt)
+
+# ---- terrain：高度场、四叉树 LOD、分层材质（M4） ----------------------------------------------
+engine_module(terrain
+    SOURCES
+        terrain/Heightfield.cpp
+        terrain/TerrainQuadtree.cpp
+        terrain/TerrainRenderer.cpp
+    DEPS engine_asset)
+
+# ---- world：场景/实体，以及场景 ↔ 物理的同步 ----------------------------------------------------
 engine_module(world
     SOURCES
         world/Scene.cpp
         world/SceneDesc.cpp
-    DEPS engine_asset)
+        world/ScenePhysics.cpp
+    DEPS engine_asset engine_physics)
 
 # ---- debug：ImGui 面板、RenderDoc ---------------------------------------------------------
 engine_module(debug
@@ -117,5 +137,6 @@ engine_module(editor
     SOURCES
         editor/Editor.cpp
         editor/EditorPanels.cpp
+        editor/EditorWorldPanel.cpp
         editor/EditorTheme.cpp
-    DEPS engine_world engine_debug imgui)
+    DEPS engine_world engine_terrain engine_debug imgui)

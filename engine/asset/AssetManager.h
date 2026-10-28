@@ -35,10 +35,17 @@ struct ModelHandle {
     bool operator==(const ModelHandle&) const = default;
 };
 
+// 独立贴图（不属于任何模型的贴图，例如地形分层材质）。与 ModelHandle 同样是槽位下标。
+struct TextureHandle {
+    uint32_t index = UINT32_MAX;
+    bool valid() const { return index != UINT32_MAX; }
+    bool operator==(const TextureHandle&) const = default;
+};
+
 enum class AssetStatus { Loading, Ready, Failed };
 
 // 内置程序化模型：不需要文件，GUID 固定（Guid::fromName("builtin/cube") 等），可以写进场景文件
-enum class BuiltinModel { Cube, Sphere, Plane };
+enum class BuiltinModel { Cube, Sphere, Plane, Capsule, Count };
 
 class AssetManager {
 public:
@@ -56,6 +63,14 @@ public:
     const std::string& error(ModelHandle h) const;
     Guid guid(ModelHandle h) const;
     std::string name(ModelHandle h) const;
+    // 每次（重新）上传成功加 1：依赖模型几何的派生数据（例如物理碰撞体）据此判断是否需要重建
+    uint32_t version(ModelHandle h) const;
+
+    // ---- 独立贴图 ----
+    TextureHandle loadTexture(Guid guid); // 已加载过则直接返回同一个句柄
+    // 未就绪或失败时返回 nullptr，调用者改用默认贴图。不要缓存返回的指针：热重载会换掉它
+    const rhi::Image* texture(TextureHandle h) const;
+    AssetStatus status(TextureHandle h) const;
 
     // 主线程每帧调用：完成后台加载的 GPU 上传，检查源文件变化并热重载
     void update(double nowSeconds);
@@ -82,9 +97,20 @@ private:
         std::string error;
         bool builtin = false;
         bool inFlight = false;
+        uint32_t version = 0;
         std::filesystem::file_time_type stamp{}; // 加载时源文件的时间戳
     };
+    struct TextureSlot {
+        Guid guid;
+        std::string name;
+        std::unique_ptr<rhi::Image> image;
+        AssetStatus status = AssetStatus::Loading;
+        std::string error;
+        bool inFlight = false;
+        std::filesystem::file_time_type stamp{};
+    };
     void startLoad(uint32_t index);
+    void startTextureLoad(uint32_t index);
     void createBuiltins();
 
     rhi::Device* m_device = nullptr;
@@ -92,10 +118,12 @@ private:
     JobSystem* m_jobs = nullptr;
     std::vector<Slot> m_slots;
     std::unordered_map<Guid, uint32_t> m_byGuid;
+    std::vector<TextureSlot> m_textures;
+    std::unordered_map<Guid, uint32_t> m_textureByGuid;
     std::unique_ptr<Model> m_fallback;
     uint32_t m_pending = 0;
     double m_lastPoll = -1.0;
-    ModelHandle m_builtins[3];
+    ModelHandle m_builtins[size_t(BuiltinModel::Count)];
 };
 
 } // namespace eng::asset

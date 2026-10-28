@@ -10,6 +10,20 @@ namespace eng {
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(MaterialParams, baseColor, emissive, pbr, flags)
 
+const char* physicsModeToString(PhysicsMode mode) {
+    switch (mode) {
+    case PhysicsMode::Static: return "static";
+    case PhysicsMode::Dynamic: return "dynamic";
+    default: return "none";
+    }
+}
+
+PhysicsMode physicsModeFromString(const std::string& s) {
+    if (s == "static") return PhysicsMode::Static;
+    if (s == "dynamic") return PhysicsMode::Dynamic;
+    return PhysicsMode::None;
+}
+
 namespace {
 
 nlohmann::json entityToJson(const EntityDesc& e) {
@@ -22,6 +36,7 @@ nlohmann::json entityToJson(const EntityDesc& e) {
                         {"instance", e.instance},
                         {"visible", e.visible}};
     if (e.material) j["material"] = *e.material;
+    if (e.physics != PhysicsMode::None) j["physics"] = physicsModeToString(e.physics); // 默认值不写，旧场景文件保持干净
     return j;
 }
 
@@ -38,6 +53,7 @@ EntityDesc entityFromJson(const nlohmann::json& j) {
     e.instance = j.value("instance", 0u);
     e.visible = j.value("visible", true);
     if (j.contains("material")) e.material = j["material"].get<MaterialParams>();
+    e.physics = physicsModeFromString(j.value("physics", std::string("none")));
     return e;
 }
 

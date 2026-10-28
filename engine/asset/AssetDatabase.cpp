@@ -37,11 +37,24 @@ void AssetDatabase::init(const stdfs::path& assetRoot, const stdfs::path& cooked
     stdfs::create_directories(m_cookedRoot, ec);
 }
 
-nlohmann::json AssetDatabase::defaultSettings(AssetType type) const {
+nlohmann::json AssetDatabase::defaultSettings(AssetType type, const stdfs::path& source) const {
     // 导入设置的默认值；改 .meta 里的值后保存，资产会自动重新烘焙
     if (type == AssetType::Model)
         return {{"optimize", true}, {"maxLods", 4}, {"lodReduction", 0.5}, {"lodMaxError", 0.02}, {"compressTextures", true}};
-    if (type == AssetType::Texture) return {{"usage", "color"}, {"generateMips", true}, {"compress", true}};
+    if (type == AssetType::Texture) {
+        // 贴图用途按文件名后缀猜（常见的美术命名习惯）：xxx_n.png → 法线，xxx_data / _orm / _mask → 数据，其余 → 颜色。
+        // 猜错了改 .meta 里的 usage 即可
+        std::string stem = source.stem().string();
+        std::transform(stem.begin(), stem.end(), stem.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        auto endsWith = [&](const char* suffix) {
+            const std::string s(suffix);
+            return stem.size() >= s.size() && stem.compare(stem.size() - s.size(), s.size(), s) == 0;
+        };
+        const char* usage = (endsWith("_n") || endsWith("_normal")) ? "normal"
+                            : (endsWith("_data") || endsWith("_orm") || endsWith("_mask")) ? "data"
+                                                                                             : "color";
+        return {{"usage", usage}, {"generateMips", true}, {"compress", true}};
+    }
     return nlohmann::json::object();
 }
 
@@ -56,7 +69,7 @@ std::optional<AssetRecord> AssetDatabase::loadOrCreateMeta(const stdfs::path& so
         try {
             const auto j = nlohmann::json::parse(*text);
             if (auto g = Guid::parse(j.value("guid", std::string{}))) rec.guid = *g;
-            rec.settings = defaultSettings(type);
+            rec.settings = defaultSettings(type, source);
             // 合并：.meta 里有的字段覆盖默认值，缺的字段用默认值（老 .meta 不需要手动升级）
             if (j.contains("settings")) rec.settings.merge_patch(j["settings"]);
         } catch (const std::exception& e) {
@@ -64,14 +77,14 @@ std::optional<AssetRecord> AssetDatabase::loadOrCreateMeta(const stdfs::path& so
             rec.guid = Guid::fromName(key(source));
             rec.meta.clear();
             rec.transient = true;
-            rec.settings = defaultSettings(type);
+            rec.settings = defaultSettings(type, source);
             return rec;
         }
     }
     if (!rec.guid.valid()) {
         // 第一次见到这个文件：生成 GUID 并写 .meta
         rec.guid = Guid::random();
-        rec.settings = defaultSettings(type);
+        rec.settings = defaultSettings(type, source);
         nlohmann::json j = {{"guid", rec.guid.toString()},
                             {"type", type == AssetType::Model ? "model" : "texture"},
                             {"settings", rec.settings}};
@@ -98,7 +111,7 @@ std::optional<Guid> AssetDatabase::registerFile(const stdfs::path& path) {
         r.guid = Guid::fromName(key(abs));
         r.type = type;
         r.source = abs;
-        r.settings = defaultSettings(type);
+        r.settings = defaultSettings(type, abs);
         r.displayName = abs.filename().string() + "（外部）";
         r.transient = true;
         rec = r;

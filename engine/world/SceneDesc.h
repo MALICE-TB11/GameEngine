@@ -14,6 +14,15 @@
 
 namespace eng {
 
+// 实体的物理参与方式（M4）。碰撞体由模型几何自动生成，见 world/ScenePhysics.h
+enum class PhysicsMode : uint8_t {
+    None,    // 不参与物理（纯装饰）
+    Static,  // 静态碰撞体：三角网格，精确贴合模型，永远不动
+    Dynamic, // 动态刚体：模型顶点的凸包，受重力和碰撞驱动
+};
+const char* physicsModeToString(PhysicsMode mode);
+PhysicsMode physicsModeFromString(const std::string& s); // 未知字符串 → None
+
 struct EntityDesc {
     std::string name;
     vec3 position{0.0f};
@@ -23,6 +32,7 @@ struct EntityDesc {
     uint32_t instance = 0;
     bool visible = true;
     std::optional<MaterialParams> material;
+    PhysicsMode physics = PhysicsMode::None;
 };
 
 struct SceneDesc {

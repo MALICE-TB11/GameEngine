@@ -145,6 +145,7 @@ void Editor::draw(float dtSeconds) {
     if (m_show.environment) drawEnvironmentPanel();
     if (m_show.renderSettings) drawRenderSettingsPanel();
     if (m_show.project) drawProjectSettingsPanel();
+    if (m_show.world) drawWorldPanel();
     if (m_show.console) drawConsolePanel(nullptr);
     if (m_show.profiler) {
         const LoopStats loop{m_ctx.loop->settings().fixedHz, m_ctx.loop->lastSteps(), m_ctx.loop->alpha(), m_ctx.sim->paused,
@@ -339,6 +340,7 @@ void Editor::drawMenuBar() {
         ImGui::MenuItem("环境光照", nullptr, &m_show.environment);
         ImGui::MenuItem("渲染设置", nullptr, &m_show.renderSettings);
         ImGui::MenuItem("项目设置", nullptr, &m_show.project);
+        ImGui::MenuItem("地形与物理", nullptr, &m_show.world);
         ImGui::Separator();
         ImGui::MenuItem("日志", nullptr, &m_show.console);
         ImGui::MenuItem("性能", nullptr, &m_show.profiler);
@@ -600,7 +602,9 @@ void Editor::drawStatusBar() {
 void Editor::drawDockSpace() {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     const ImGuiID dockId = ImGui::GetID("EditorDockSpace");
-    if (m_needLayout) {
+    // 布局文件里没有这个停靠节点也要重建：例如第一次启动就是 --no-ui 游戏模式，
+    // 退出时 ImGui 照样写了 ini（但里面没有停靠布局），只看「文件是否存在」会误判
+    if (m_needLayout || !ImGui::DockBuilderGetNode(dockId)) {
         buildDefaultLayout(dockId, vp->WorkSize);
         m_needLayout = false;
         m_layoutJustBuilt = true;
@@ -631,6 +635,7 @@ void Editor::buildDefaultLayout(ImGuiID dockId, const ImVec2& size) {
     ImGui::DockBuilderDockWindow(kEnvironmentWindow, rightBottom);
     ImGui::DockBuilderDockWindow(kRenderSettingsWindow, rightBottom);
     ImGui::DockBuilderDockWindow(kProjectWindow, rightBottom);
+    ImGui::DockBuilderDockWindow(kWorldWindow, rightBottom);
     ImGui::DockBuilderDockWindow(kConsoleWindow, bottom);
     ImGui::DockBuilderDockWindow(kProfilerWindow, bottom);
     ImGui::DockBuilderDockWindow(kRenderGraphWindow, bottom);

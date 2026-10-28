@@ -20,16 +20,22 @@ public:
     const rhi::Image& flatNormal() const { return m_flatNormal; } // (0.5, 0.5, 1) = 切线空间 +Z
     const rhi::Image& error() const { return m_error; }
 
+    // 1×1 深度图，深度 = 0（反向 Z 的无穷远）：阴影 pass 被关掉时代替阴影图集 → 处处照亮。
+    // 必须是深度格式：比较采样（SampleCmp）不能用在颜色贴图上。
+    const rhi::Image& depthFar() const { return m_depthFar; }
+
     VkSampler linearWrap() const { return m_linearWrap; }   // 带各向异性，用于材质贴图
     VkSampler linearClamp() const { return m_linearClamp; } // 全屏后处理
     VkSampler pointClamp() const { return m_pointClamp; }   // 精确取像素（深度、调试）
+    VkSampler shadowCompare() const { return m_shadowCompare; } // 阴影比较采样（GREATER_OR_EQUAL，反向 Z）
 
 private:
     rhi::Device* m_device = nullptr;
-    rhi::Image m_black, m_white, m_flatNormal, m_error;
+    rhi::Image m_black, m_white, m_flatNormal, m_error, m_depthFar;
     VkSampler m_linearWrap = VK_NULL_HANDLE;
     VkSampler m_linearClamp = VK_NULL_HANDLE;
     VkSampler m_pointClamp = VK_NULL_HANDLE;
+    VkSampler m_shadowCompare = VK_NULL_HANDLE;
 };
 
 } // namespace eng

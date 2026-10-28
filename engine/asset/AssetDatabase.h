@@ -60,7 +60,7 @@ public:
     const std::filesystem::path& assetRoot() const { return m_assetRoot; }
 
 private:
-    nlohmann::json defaultSettings(AssetType type) const;
+    nlohmann::json defaultSettings(AssetType type, const std::filesystem::path& source) const;
     std::optional<AssetRecord> loadOrCreateMeta(const std::filesystem::path& source, AssetType type);
     static std::string key(const std::filesystem::path& p);
 

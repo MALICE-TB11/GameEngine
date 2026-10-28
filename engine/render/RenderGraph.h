@@ -46,7 +46,7 @@ enum class Access : uint8_t {
 enum class LoadOp { Load, Clear, DontCare };
 
 // pass 被跳过时，读它输出的下游 pass 改为读哪张默认贴图
-enum class Fallback : uint8_t { Black, White, FlatNormal, None };
+enum class Fallback : uint8_t { Black, White, FlatNormal, DepthFar, None }; // DepthFar：深度 0 的深度图（阴影「处处照亮」）
 
 bool isWrite(Access a);
 bool isAttachment(Access a);

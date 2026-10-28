@@ -29,7 +29,7 @@ float3 ShadePBR(SurfaceData s, LightingInputs L)
     float3 F = F_Schlick(VoH, F0);
     float3 specular = D_GGX(NoH, a) * V_SmithGGXCorrelated(NoV, NoL, a) * F;
     float3 diffuse = (1.0 - F) * diffuseColor / PI; // 被镜面反射掉的能量不再参与漫反射
-    float3 direct = (diffuse + specular) * L.sunIrradiance * NoL;
+    float3 direct = (diffuse + specular) * L.sunIrradiance * NoL * L.sunShadow;
 
     // ---- 环境光：解析天空 ----
     float3 ambientDiffuse = diffuseColor * AmbientRadiance(n, L);
