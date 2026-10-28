@@ -7,6 +7,7 @@
 #include "rhi/Descriptors.h"
 #include "rhi/Device.h"
 
+#include <algorithm>
 #include <unordered_map>
 
 namespace eng {
@@ -103,6 +104,12 @@ void ForwardPass::add(rg::RenderGraph& graph, rg::TextureHandle color, rg::Textu
                 DrawPush push;
                 push.model = item.model;
                 push.material = mat.params;
+                if (item.highlight > 0.0f) {
+                    // 选中高亮：叠加一点橙色自发光。只改这次 draw 的 push constant，不改材质本身
+                    const vec3 kHighlight{1.0f, 0.45f, 0.1f};
+                    push.material.emissive += vec4(kHighlight * item.highlight / std::max(push.material.flags.y, 1.0f), 0.0f);
+                    push.material.flags.y = std::max(push.material.flags.y, 1.0f);
+                }
                 m_pipelines->pushConstants(ctx.cmd, p, &push, sizeof(push));
                 drawMesh(ctx.cmd, *item.mesh);
             }

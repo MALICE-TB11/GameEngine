@@ -24,6 +24,7 @@ struct Model {
         uint32_t mesh = 0;
         uint32_t material = UINT32_MAX; // UINT32_MAX = 默认材质
         mat4 transform{1.0f};           // 相对模型根节点
+        std::string name;               // glTF 节点名（编辑器大纲里显示）
     };
 
     std::string name;

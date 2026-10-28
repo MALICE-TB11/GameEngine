@@ -22,6 +22,7 @@ struct DrawItem {
     const GpuMesh* mesh = nullptr;
     mat4 model{1.0f};
     const Material* material = nullptr; // nullptr = 默认材质
+    float highlight = 0.0f;             // 编辑器选中高亮强度（0 = 不高亮）
 };
 
 struct DrawList {

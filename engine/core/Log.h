@@ -22,6 +22,8 @@ void shutdown();
 
 // 最近的若干条日志（拷贝一份，线程安全）
 std::vector<Entry> recent();
+// 清空「最近日志」缓冲（日志面板的「清空」按钮）；不影响日志文件和 error 计数
+void clearRecent();
 // 自启动以来 error/critical 级别的日志条数
 uint32_t errorCount();
 

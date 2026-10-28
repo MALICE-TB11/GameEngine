@@ -17,6 +17,11 @@ namespace {
 std::string g_iniPath; // ImGui 只保存指针，字符串必须一直活着
 }
 
+std::filesystem::path ImGuiLayer::layoutIniPath() {
+    // 文件名带版本：停靠布局改版后换个名字，旧的浮动窗口布局不会干扰新布局
+    return fs::projectRoot() / "build" / "imgui_editor_v1.ini";
+}
+
 bool ImGuiLayer::init(rhi::Device& device, Window& window, VkFormat colorFormat, uint32_t imageCount) {
     m_device = &device;
 
@@ -35,7 +40,9 @@ bool ImGuiLayer::init(rhi::Device& device, Window& window, VkFormat colorFormat,
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    g_iniPath = (fs::projectRoot() / "build" / "imgui.ini").string();
+    // 编辑器习惯：只能拖标题栏移动窗口，否则在视口里拖鼠标会把整个窗口拖走
+    io.ConfigWindowsMoveFromTitleBarOnly = true;
+    g_iniPath = layoutIniPath().string();
     io.IniFilename = g_iniPath.c_str();
     ImGui::StyleColorsDark();
 
@@ -44,7 +51,9 @@ bool ImGuiLayer::init(rhi::Device& device, Window& window, VkFormat colorFormat,
     if (std::filesystem::exists(cjkFont)) {
         // 「常用 2500 字」不含 渲、帧 等技术词汇用字；全量字库（2 万字）又会让字体图集膨胀到几十 MB。
         // 折中：常用字 + 本引擎会用到的专业词汇用字。
-        // EXTEND: UI 或日志里出现「?」方块时，把缺的字加进 kExtraGlyphs。
+        // 另外，源码字符串里实际用到的其余汉字由 tools/update_ui_glyphs.py 扫描生成到 UiGlyphs.inc。
+        // EXTEND: 新增界面文字后出现「?」，运行 python tools/update_ui_glyphs.py 再重新构建。
+#include "debug/UiGlyphs.inc"
         static const char* kExtraGlyphs =
             "渲帧清屏缓栅瞬焦散噪糙曝映射纹贴潮汐浪沫涌岸礁苔藓岩砂崖穴遗迹漂吸衰减折菲涅尔雅谐插值钳截捕获着描"
             "阴影漫镜框拓扑剔遮锥裁雾霾烘焙载兜灰阶伽饱亮湿润附胶囊碰撞约束积蓝绿紫橙粉"
@@ -54,11 +63,26 @@ bool ImGuiLayer::init(rhi::Device& device, Window& window, VkFormat colorFormat,
             ImFontGlyphRangesBuilder builder;
             builder.AddRanges(io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
             builder.AddText(kExtraGlyphs);
+            builder.AddText(kUiExtraGlyphs);
             builder.BuildRanges(&ranges);
         }
         ImFontConfig cfg;
         cfg.OversampleH = 1; // 中文字形多，关掉水平超采样能让图集小一半，16px 下看不出差别
         io.Fonts->AddFontFromFileTTF(cjkFont, 17.0f, &cfg, ranges.Data);
+
+        // 图标：合并 Windows 自带的 Segoe UI Symbol（箭头、几何图形、杂项符号、装饰符号），
+        // 这样按钮可以写成 "▶ 运行"、"☀ 环境" 而不需要额外的图标字体文件。
+        // EXTEND: 想要更丰富的图标，可换成 Font Awesome / Material Symbols 等图标字体（以同样方式合并）。
+        const char* symbolFont = "C:/Windows/Fonts/seguisym.ttf";
+        if (std::filesystem::exists(symbolFont)) {
+            // 箭头、技术符号、制表符（│）、几何图形、杂项符号、装饰符号
+            static const ImWchar kIconRanges[] = {0x2190, 0x21FF, 0x2300, 0x23FF, 0x2500, 0x25FF, 0x2600, 0x27BF, 0};
+            ImFontConfig icons;
+            icons.MergeMode = true;   // 合并进上一个字体：同一行文字里中文和图标混排
+            icons.OversampleH = 1;
+            icons.GlyphOffset.y = 1.0f; // 符号字体的基线略高，往下挪一点与中文对齐
+            io.Fonts->AddFontFromFileTTF(symbolFont, 16.0f, &icons, kIconRanges);
+        }
     } else {
         LOG_WARN("未找到中文字体 {}，ImGui 中文会显示为 ?", cjkFont);
         io.Fonts->AddFontDefault();

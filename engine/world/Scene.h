@@ -12,6 +12,7 @@
 #include "render/RenderTypes.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -27,7 +28,7 @@ struct Entity {
     Transform current;  // 当前固定步的状态
     mat4 meshOffset{1.0f}; // 网格相对实体的固定偏移（来自 glTF 节点层级）
     const GpuMesh* mesh = nullptr;
-    const Material* material = nullptr;
+    Material* material = nullptr; // 非 const：编辑器检视器可以直接修改材质参数
     bool visible = true;
 };
 
@@ -45,8 +46,12 @@ public:
 
     // 每个固定步开始时调用：current → previous
     void beginFixedStep();
-    // 生成渲染列表，变换按 alpha 在 previous 与 current 之间插值
-    void buildDrawList(DrawList& out, float alpha) const;
+    // 生成渲染列表，变换按 alpha 在 previous 与 current 之间插值；highlighted 指定的实体带选中高亮
+    void buildDrawList(DrawList& out, float alpha, std::optional<EntityId> highlighted = std::nullopt,
+                       float highlightStrength = 0.0f) const;
+    // 实体当前（插值后）的世界矩阵，以及世界空间包围盒（编辑器点选、聚焦用）
+    mat4 worldMatrix(EntityId id, float alpha = 1.0f) const;
+    bool worldBounds(EntityId id, vec3& outMin, vec3& outMax) const;
 
     // 所有可编辑材质（ImGui 材质面板用）
     std::vector<Material*> materials();

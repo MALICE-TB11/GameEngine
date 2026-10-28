@@ -1,51 +1,80 @@
 {
-  "window": {
-    "title": "Ocean Engine Sandbox",
-    "width": 1600,
-    "height": 900
-  },
-  "renderer": {
-    "vsync": true,
-    "clearColor": [0.02, 0.05, 0.08, 1.0],
-    "debugView": 0
-  },
-  "lighting": {
-    "sunElevationDeg": 28.0,
-    "sunAzimuthDeg": 210.0,
-    "sunIntensity": 4.5,
-    "sunColor": [1.0, 0.93, 0.82],
-    "sunAngularRadiusDeg": 0.6,
-    "sunHalo": 1.0,
-    "skyZenith": [0.06, 0.2, 0.62],
-    "skyHorizon": [0.38, 0.56, 0.85],
-    "groundColor": [0.12, 0.1, 0.08],
-    "skyIntensity": 1.0,
-    "ambientIntensity": 1.0,
-    "exposure": 1.0,
-    "tonemapper": 1
-  },
-  "loop": {
-    "fixedHz": 60.0,
-    "maxStepsPerFrame": 5,
-    "maxFrameTime": 0.25
-  },
   "camera": {
     "fovDeg": 60.0,
-    "nearPlane": 0.05,
-    "moveSpeed": 5.0,
+    "lookSensitivity": 0.15000000596046448,
+    "moveSpeed": 14.929923057556152,
+    "nearPlane": 0.05000000074505806,
     "sprintMultiplier": 4.0,
-    "lookSensitivity": 0.15,
-    "startPosition": [0.0, 2.6, 9.0],
-    "startYawDeg": -90.0,
-    "startPitchDeg": -12.0
+    "startPitchDeg": -12.0,
+    "startPosition": [
+      0.0,
+      2.5999999046325684,
+      9.0
+    ],
+    "startYawDeg": -90.0
   },
   "debug": {
     "renderdoc": true
   },
+  "lighting": {
+    "ambientIntensity": 1.0,
+    "exposure": 1.0,
+    "groundColor": [
+      0.11999999731779099,
+      0.10000000149011612,
+      0.07999999821186066
+    ],
+    "skyHorizon": [
+      0.3799999952316284,
+      0.5600000023841858,
+      0.8500000238418579
+    ],
+    "skyIntensity": 1.0,
+    "skyZenith": [
+      0.05999999865889549,
+      0.20000000298023224,
+      0.6200000047683716
+    ],
+    "sunAngularRadiusDeg": 0.6000000238418579,
+    "sunAzimuthDeg": 210.0,
+    "sunColor": [
+      1.0,
+      0.9300000071525574,
+      0.8199999928474426
+    ],
+    "sunElevationDeg": 28.0,
+    "sunHalo": 1.0,
+    "sunIntensity": 4.5,
+    "tonemapper": 1
+  },
+  "loop": {
+    "fixedHz": 60.0,
+    "maxFrameTime": 0.25,
+    "maxStepsPerFrame": 5
+  },
+  "renderer": {
+    "clearColor": [
+      0.019999999552965164,
+      0.05000000074505806,
+      0.07999999821186066,
+      1.0
+    ],
+    "debugView": 0,
+    "vsync": true
+  },
   "scene": {
     "model": "assets/models/ruins.glb",
-    "modelPosition": [0.0, 0.0, -3.0],
+    "modelPosition": [
+      0.0,
+      0.0,
+      -3.0
+    ],
     "modelScale": 1.0,
     "spinSpeedDeg": 45.0
+  },
+  "window": {
+    "height": 900,
+    "title": "Ocean Engine Sandbox",
+    "width": 1600
   }
 }

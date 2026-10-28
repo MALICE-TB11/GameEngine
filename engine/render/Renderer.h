@@ -63,6 +63,16 @@ public:
     using OverlayFn = std::function<void(VkCommandBuffer)>;
     void setOverlay(OverlayFn fn) { m_overlay = std::move(fn); }
 
+    // ---- 输出目标（每帧在构建 UI 之前选择一次） ----
+    // 编辑器模式：场景画进一张与视口面板同尺寸的离屏贴图，由 ImGui 当作图片显示在「视口」窗口里；
+    //            交换链上只有编辑器界面。返回该贴图的 view（尺寸变化时会换成新的 view）。
+    VkImageView useViewportOutput(uint32_t width, uint32_t height);
+    // 游戏模式：场景直接画到交换链（全屏），UI 只作为叠加层。
+    void useBackbufferOutput();
+    bool viewportOutput() const { return m_viewportOutput; }
+    // 场景渲染分辨率（编辑器模式 = 视口面板尺寸；游戏模式 = 交换链尺寸）
+    VkExtent2D sceneExtent() const;
+
     // 渲染并呈现一帧。返回 false 表示本帧被跳过（交换链重建中、窗口最小化）。
     bool drawFrame(const RenderView& view, const DrawList& draws);
 
@@ -75,6 +85,7 @@ public:
     PipelineCache& pipelines() { return m_pipelines; }
     const rhi::GpuProfiler& profiler() const { return m_profiler; }
     ForwardPass& forwardPass() { return m_forward; }
+    const DefaultResources& defaults() const { return m_defaults; }
 
 private:
     struct FrameResources {
@@ -117,6 +128,9 @@ private:
     std::filesystem::path m_capturePath;
     rhi::Buffer m_captureBuffer;
     bool m_captureRecorded = false;
+
+    bool m_viewportOutput = false;
+    VkExtent2D m_viewportExtent{1, 1};
 };
 
 } // namespace eng

@@ -1,6 +1,7 @@
 #include "world/Scene.h"
 
 #include "core/Log.h"
+#include "math/Geometry.h"
 
 namespace eng {
 
@@ -16,7 +17,8 @@ bool Scene::addModel(rhi::Device& device, const std::filesystem::path& path, con
     auto owned = std::make_unique<Model>(std::move(*model));
     for (const Model::Instance& inst : owned->instances) {
         Entity e;
-        e.name = owned->name;
+        // 「模型名/节点名」：编辑器大纲按 '/' 前的部分分组
+        e.name = owned->name + "/" + inst.name;
         e.current = root;
         e.meshOffset = inst.transform;
         e.mesh = &owned->meshes[inst.mesh];
@@ -41,13 +43,26 @@ void Scene::beginFixedStep() {
     for (Entity& e : m_entities) e.previous = e.current;
 }
 
-void Scene::buildDrawList(DrawList& out, float alpha) const {
+void Scene::buildDrawList(DrawList& out, float alpha, std::optional<EntityId> highlighted, float highlightStrength) const {
     out.opaque.clear();
-    for (const Entity& e : m_entities) {
+    for (EntityId id = 0; id < m_entities.size(); ++id) {
+        const Entity& e = m_entities[id];
         if (!e.visible || !e.mesh) continue;
-        const mat4 world = Transform::lerp(e.previous, e.current, alpha).matrix() * e.meshOffset;
-        out.opaque.push_back({e.mesh, world, e.material});
+        const float hl = (highlighted && *highlighted == id) ? highlightStrength : 0.0f;
+        out.opaque.push_back({e.mesh, worldMatrix(id, alpha), e.material, hl});
     }
+}
+
+mat4 Scene::worldMatrix(EntityId id, float alpha) const {
+    const Entity& e = m_entities[id];
+    return Transform::lerp(e.previous, e.current, alpha).matrix() * e.meshOffset;
+}
+
+bool Scene::worldBounds(EntityId id, vec3& outMin, vec3& outMax) const {
+    const Entity& e = m_entities[id];
+    if (!e.mesh) return false;
+    transformAabb(worldMatrix(id), e.mesh->bounds.min, e.mesh->bounds.max, outMin, outMax);
+    return true;
 }
 
 std::vector<Material*> Scene::materials() {

@@ -31,6 +31,8 @@ public:
     mat4 view() const;
     mat4 projection(float aspect) const;
     vec3 position() const { return m_position; }
+    // 把相机移到能完整看到以 center 为球心、radius 为半径的球的位置（编辑器「聚焦选中物体」）
+    void focus(const vec3& center, float radius);
     vec3 forward() const;
     float yawDeg() const { return m_yaw; }
     float pitchDeg() const { return m_pitch; }

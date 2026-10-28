@@ -1,6 +1,7 @@
 add_executable(engine_tests
     test_main.cpp
     test_math.cpp
+    test_geometry.cpp
     test_loop.cpp
     test_config.cpp
     test_rendergraph.cpp)

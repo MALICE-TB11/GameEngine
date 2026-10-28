@@ -183,8 +183,9 @@ std::optional<Model> loadGltf(rhi::Device& device, const std::filesystem::path& 
         fastgltf::iterateSceneNodes(gltf, sceneIndex, fastgltf::math::fmat4x4(), [&](fastgltf::Node& node, const fastgltf::math::fmat4x4& m) {
             if (!node.meshIndex) return;
             const mat4 world = toGlm(m);
+            const std::string nodeName = node.name.empty() ? "Node" : std::string(node.name);
             for (const auto& [meshIdx, material] : meshPrims[*node.meshIndex]) {
-                model.instances.push_back({meshIdx, material, world});
+                model.instances.push_back({meshIdx, material, world, nodeName});
                 const Aabb& b = model.meshes[meshIdx].bounds;
                 for (int c = 0; c < 8; ++c) {
                     const vec3 corner{(c & 1) ? b.max.x : b.min.x, (c & 2) ? b.max.y : b.min.y, (c & 4) ? b.max.z : b.min.z};

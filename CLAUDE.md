@@ -22,8 +22,8 @@
 
 ## 模块依赖（单向，禁止反向 include）
 ```
-core ← platform ← rhi ← render ← 特性模块(terrain / ocean / medium / physics …) ← sandbox
-math 只依赖 GLM，任何层都可用；debug 可依赖 render
+core ← platform ← rhi ← render ← 特性模块(terrain / ocean / medium / physics …) / world / debug ← editor ← sandbox
+math 只依赖 GLM，任何层都可用；debug 可依赖 render；editor 在最上层，引擎其他模块都不依赖它
 ```
 - 特性模块之间**不互相 include**，通过 `medium/`、`world/` 的共享接口交流。
 - 新文件放到对应模块目录，CMake target 名为 `engine_<module>`。
@@ -45,6 +45,9 @@ validation layer（Debug 默认开）、所有 Vulkan 对象 debug name、Render
 - 扩展点用 `// EXTEND:` 标注，并在对应 docs 笔记的「扩展点」一节汇总。
 - shader 文件（.hlsl/.hlsli）必须是 **UTF-8 带 BOM**：dxc 用 `-Zi` 嵌入含中文的源码时，无 BOM 会报 `0x80070459`。`build.ps1` 会自动修正。
 - PowerShell 脚本保持纯 ASCII（Windows PowerShell 5.1 按 ANSI 读无 BOM 文件）。
+- 界面文字新增汉字后运行 `python tools/update_ui_glyphs.py`（否则不在常用字表里的字显示为「?」）。
+- 编辑器面板窗口名用「图标 标题###固定ID」，新面板在 `Editor::buildDefaultLayout` 里指定停靠位置，开关放进「视图」菜单。
+- 编辑器只通过 `EditorContext` 访问引擎状态；引擎模块不得 include `editor/`。
 - 新增渲染 pass：在 `engine/render/passes/` 建文件（init 建管线，add 声明读写），在 `Renderer::buildGraph` 中按顺序调用；不要手写 barrier。
 - 新增材质：只写「填 SurfaceData」的部分，光照统一调用 `ShadeSurface`，介质统一调用 `medium.hlsli`。
 - 命名：类型 `PascalCase`，函数 `camelCase`，成员 `m_` 前缀，常量 `kName`，命名空间 `eng`。

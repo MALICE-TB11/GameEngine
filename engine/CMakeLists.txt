@@ -96,3 +96,12 @@ engine_module(debug
     DEPS engine_render imgui)
 # renderdoc_app.h（MIT 许可，从 RenderDoc 安装目录复制）
 target_include_directories(engine_debug PRIVATE ${CMAKE_SOURCE_DIR}/external/renderdoc)
+
+# ---- editor：编辑器界面（菜单、工具栏、停靠布局、视口、大纲、检视器……） --------------------
+# 它在依赖链的最上层：知道 world（场景）和 debug（通用面板），引擎其他模块都不知道它。
+engine_module(editor
+    SOURCES
+        editor/Editor.cpp
+        editor/EditorPanels.cpp
+        editor/EditorTheme.cpp
+    DEPS engine_world engine_debug imgui)

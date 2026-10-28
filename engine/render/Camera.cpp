@@ -53,6 +53,13 @@ bool FlyCamera::update(const Input& input, float dt, bool allowMouse, bool allow
     return looking;
 }
 
+void FlyCamera::focus(const vec3& center, float radius) {
+    // 球恰好填满视野时的距离：d = r / sin(fov/2)；再留 20% 余量
+    const float halfFov = glm::radians(m_settings.fovDeg) * 0.5f;
+    const float dist = std::max(radius, 0.1f) / std::sin(halfFov) * 1.2f;
+    m_position = center - forward() * dist; // 保持当前朝向，只平移
+}
+
 mat4 FlyCamera::view() const {
     return glm::lookAt(m_position, m_position + forward(), kWorldUp);
 }

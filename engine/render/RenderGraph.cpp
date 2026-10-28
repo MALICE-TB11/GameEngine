@@ -299,32 +299,42 @@ VkImageView RenderGraph::fallbackView(Fallback f) const {
     }
 }
 
+RenderGraph::Pooled& RenderGraph::acquirePooled(const std::string& name, VkFormat format, VkExtent2D extent, VkImageUsageFlags usage) {
+    // 总是带上 SAMPLED 与 TRANSFER_SRC：方便调试面板查看、截图，开销可以忽略
+    usage |= VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    Pooled& p = m_pool[name];
+    const bool mismatch = !p.image || p.image.format != format || p.image.extent.width != extent.width ||
+                          p.image.extent.height != extent.height || (p.usage & usage) != usage;
+    if (mismatch) {
+        if (p.image) {
+            // 旧贴图可能还被前一两帧使用：延迟到 GPU 用完再销毁
+            rhi::Image old = p.image;
+            m_device->deferDestroy([dev = m_device, old]() mutable { rhi::destroyImage(*dev, old); });
+        }
+        rhi::ImageDesc d;
+        d.width = extent.width;
+        d.height = extent.height;
+        d.format = format;
+        d.usage = usage | p.usage; // 只增不减：避免两种用法交替出现时反复重建
+        d.name = name.c_str();
+        p.image = rhi::createImage(*m_device, d);
+        p.usage = d.usage;
+        p.state = {};
+        p.lastWrite = {};
+    }
+    p.lastUsedFrame = m_frameNumber;
+    return p;
+}
+
+VkImageView RenderGraph::preparePooledTexture(const TextureDesc& desc, VkImageUsageFlags usage) {
+    ENG_ASSERT(desc.width > 0 && desc.height > 0, "preparePooledTexture 需要绝对尺寸");
+    return acquirePooled(desc.name, desc.format, {desc.width, desc.height}, usage).image.view;
+}
+
 void RenderGraph::realizeTransients() {
     for (Resource& r : m_resources) {
         if (r.imported) continue;
-        // 总是带上 SAMPLED 与 TRANSFER_SRC：方便调试面板查看、截图，开销可以忽略
-        const VkImageUsageFlags usage = r.usage | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-        auto [it, inserted] = m_pool.try_emplace(r.desc.name);
-        Pooled& p = it->second;
-        const bool mismatch = !p.image || p.image.format != r.format || p.image.extent.width != r.extent.width ||
-                              p.image.extent.height != r.extent.height || (p.usage & usage) != usage;
-        if (mismatch) {
-            if (p.image) {
-                // 旧贴图可能还被前一两帧使用：延迟到 GPU 用完再销毁
-                rhi::Image old = p.image;
-                m_device->deferDestroy([dev = m_device, old]() mutable { rhi::destroyImage(*dev, old); });
-            }
-            rhi::ImageDesc d;
-            d.width = r.extent.width;
-            d.height = r.extent.height;
-            d.format = r.format;
-            d.usage = usage;
-            d.name = r.desc.name.c_str();
-            p.image = rhi::createImage(*m_device, d);
-            p.usage = usage;
-            p.state = {};
-        }
-        p.lastUsedFrame = m_frameNumber;
+        Pooled& p = acquirePooled(r.desc.name, r.format, r.extent, r.usage);
         r.image = p.image.image;
         r.view = p.image.view;
     }

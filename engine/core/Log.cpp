@@ -23,6 +23,10 @@ public:
         std::lock_guard lock(mutex_);
         return {m_entries.begin(), m_entries.end()};
     }
+    void clear() {
+        std::lock_guard lock(mutex_);
+        m_entries.clear();
+    }
 
 protected:
     void sink_it_(const spdlog::details::log_msg& msg) override {
@@ -80,6 +84,10 @@ void shutdown() {
 
 std::vector<Entry> recent() {
     return g_ring ? g_ring->snapshot() : std::vector<Entry>{};
+}
+
+void clearRecent() {
+    if (g_ring) g_ring->clear();
 }
 
 uint32_t errorCount() {

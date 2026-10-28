@@ -140,7 +140,7 @@ void Renderer::updateFrameConstants(FrameResources& frame, const RenderView& vie
     c.viewProj = view.proj * view.view;
     c.invViewProj = glm::inverse(c.viewProj);
     c.cameraPos = vec4(view.position, 1.0f);
-    const VkExtent2D e = m_swapchain.extent();
+    const VkExtent2D e = sceneExtent();
     c.screen = vec4(float(e.width), float(e.height), 1.0f / float(e.width), 1.0f / float(e.height));
     c.time = vec4(float(view.time), view.dt, float(m_frameNumber), 0.0f);
 
@@ -253,8 +253,38 @@ bool Renderer::drawFrame(const RenderView& view, const DrawList& draws) {
     return true;
 }
 
+namespace {
+// 编辑器视口贴图：格式与交换链相同，这样 Tonemap 管线（按交换链格式创建）可以直接写它
+rg::TextureDesc viewportDesc(VkFormat format, VkExtent2D extent) {
+    rg::TextureDesc d;
+    d.name = "ViewportColor";
+    d.format = format;
+    d.width = extent.width;
+    d.height = extent.height;
+    d.fallback = rg::Fallback::Black;
+    return d;
+}
+} // namespace
+
+VkImageView Renderer::useViewportOutput(uint32_t width, uint32_t height) {
+    m_viewportOutput = true;
+    // 面板被拖得很小时也保留最小尺寸，避免创建 0 尺寸贴图
+    m_viewportExtent = {std::max(width, 16u), std::max(height, 16u)};
+    return m_graph.preparePooledTexture(viewportDesc(m_swapchain.format(), m_viewportExtent),
+                                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+}
+
+void Renderer::useBackbufferOutput() {
+    m_viewportOutput = false;
+}
+
+VkExtent2D Renderer::sceneExtent() const {
+    return m_viewportOutput ? m_viewportExtent : m_swapchain.extent();
+}
+
 void Renderer::buildGraph(uint32_t imageIndex, const DrawList& draws) {
     const VkExtent2D extent = m_swapchain.extent();
+    const VkExtent2D scene = sceneExtent();
     m_graph.beginFrame(extent, m_frameNumber);
 
     // 交换链图像：初始阶段 = submit 等待 imageAvailable 的阶段；帧末必须是 PRESENT_SRC 布局
@@ -266,6 +296,8 @@ void Renderer::buildGraph(uint32_t imageIndex, const DrawList& draws) {
     rg::TextureDesc colorDesc;
     colorDesc.name = "SceneColor";
     colorDesc.format = kSceneColorFormat;
+    colorDesc.width = scene.width; // 场景分辨率跟随输出目标（视口面板或整个窗口）
+    colorDesc.height = scene.height;
     colorDesc.fallback = rg::Fallback::Black;
     const vec4 c = m_settings.clearColor;
     colorDesc.clear.color = {{c.r, c.g, c.b, c.a}};
@@ -274,6 +306,8 @@ void Renderer::buildGraph(uint32_t imageIndex, const DrawList& draws) {
     rg::TextureDesc depthDesc;
     depthDesc.name = "SceneDepth";
     depthDesc.format = kDepthFormat;
+    depthDesc.width = scene.width;
+    depthDesc.height = scene.height;
     depthDesc.fallback = rg::Fallback::None;
     depthDesc.clear.depthStencil = {0.0f, 0}; // reverse-Z：0 = 无穷远
     const rg::TextureHandle depth = m_graph.createTexture(depthDesc);
@@ -281,12 +315,25 @@ void Renderer::buildGraph(uint32_t imageIndex, const DrawList& draws) {
     // ---- pass 顺序 = 执行顺序 ----
     m_forward.add(m_graph, sceneColor, depth, draws);
     m_sky.add(m_graph, sceneColor, depth);
-    m_tonemap.add(m_graph, sceneColor, backbuffer);
-    m_graph.addPass("UI", rg::PassType::Graphics)
-        .color(backbuffer, rg::LoadOp::Load) // 叠加在 tonemap 结果上；若 tonemap 被关，图会自动改成 CLEAR
-        .execute([this](rg::PassContext& ctx) {
-            if (m_overlay) m_overlay(ctx.cmd);
-        });
+    if (m_viewportOutput) {
+        // 编辑器模式：tonemap → 视口贴图；UI pass 采样它（ImGui::Image）并画整个编辑器界面。
+        // 「采样」声明让图在 UI 之前把视口贴图转成 SHADER_READ_ONLY 布局。
+        const rg::TextureHandle viewport = m_graph.createTexture(viewportDesc(m_swapchain.format(), scene));
+        m_tonemap.add(m_graph, sceneColor, viewport);
+        m_graph.addPass("UI", rg::PassType::Graphics)
+            .sampled(viewport)
+            .color(backbuffer, rg::LoadOp::Clear)
+            .execute([this](rg::PassContext& ctx) {
+                if (m_overlay) m_overlay(ctx.cmd);
+            });
+    } else {
+        m_tonemap.add(m_graph, sceneColor, backbuffer);
+        m_graph.addPass("UI", rg::PassType::Graphics)
+            .color(backbuffer, rg::LoadOp::Load) // 叠加在 tonemap 结果上；若 tonemap 被关，图会自动改成 CLEAR
+            .execute([this](rg::PassContext& ctx) {
+                if (m_overlay) m_overlay(ctx.cmd);
+            });
+    }
     if (!m_capturePath.empty()) addCapturePass(backbuffer, imageIndex);
 }
 

@@ -173,6 +173,11 @@ public:
     PassBuilder addPass(const std::string& name, PassType type);
     void execute(VkCommandBuffer cmd, FrameContext& frame, rhi::GpuProfiler* profiler);
 
+    // 提前（在声明 pass 之前）确保某个池化贴图以给定尺寸存在，并返回它的 view。
+    // 用途：编辑器视口贴图要在构建 ImGui 界面时就拿到 view（ImGui::Image 需要），
+    // 而普通瞬态贴图要到 execute 时才分配。之后用同名 createTexture 声明即可复用同一张图。
+    VkImageView preparePooledTexture(const TextureDesc& desc, VkImageUsageFlags usage);
+
     // ---- 持久的 pass 开关（ImGui 改它） ----
     bool& passEnabled(const std::string& name);
     const std::vector<PassReport>& lastReport() const { return m_report; }
@@ -216,6 +221,7 @@ private:
     };
 
     void addAccess(uint32_t pass, TextureHandle t, Access a, LoadOp load);
+    Pooled& acquirePooled(const std::string& name, VkFormat format, VkExtent2D extent, VkImageUsageFlags usage);
     void realizeTransients();
     VkImageView fallbackView(Fallback f) const;
 

@@ -5,6 +5,8 @@
 
 #include "rhi/VkCommon.h"
 
+#include <filesystem>
+
 namespace eng {
 
 class Window;
@@ -22,6 +24,9 @@ public:
     // ImGui 正在使用鼠标/键盘时（例如拖动滑条），相机等游戏输入应忽略
     bool wantsMouse() const;
     bool wantsKeyboard() const;
+
+    // 停靠布局保存在这个文件里；不存在时编辑器会生成默认布局
+    static std::filesystem::path layoutIniPath();
 
 private:
     rhi::Device* m_device = nullptr;

@@ -1,12 +1,12 @@
 #pragma once
 // 演示程序：把各模块串起来的「胶水」。
-// 引擎模块不知道 App 的存在；App 负责创建模块、驱动主循环、组织调试 UI。
+// 引擎模块不知道 App 的存在；App 负责创建模块、驱动主循环，界面交给 Editor。
 
 #include "core/Config.h"
 #include "core/Time.h"
 #include "debug/ImGuiLayer.h"
 #include "debug/RenderDocCapture.h"
-#include "debug/StatsPanel.h"
+#include "editor/Editor.h"
 #include "math/Transform.h"
 #include "platform/Input.h"
 #include "platform/Window.h"
@@ -28,7 +28,8 @@ struct LaunchOptions {
     std::optional<bool> validation;     // --validation / --no-validation，覆盖默认值
     std::optional<bool> renderdoc;      // --renderdoc / --no-renderdoc，覆盖 config
     std::string model;                  // --model path.glb：替换 config 里的演示模型
-    bool hideUI = false;                // --no-ui：启动时隐藏调试界面（截图用），F1 切换
+    bool hideUI = false;                // --no-ui：以游戏模式启动（场景全屏，F1 切回编辑器）
+    std::string select;                 // --select 名字：启动时选中该实体（截图/演示用）
 };
 
 struct DebugSettings {
@@ -54,10 +55,7 @@ private:
     void saveSettings();
     void createScene();
     void fixedUpdate(double dt);
-    void update(double dt);
-    void drawUI();
-    void drawLightingPanel();
-    void drawMaterialPanel();
+    void updateCamera(double dt);
 
     LaunchOptions m_options;
     ConfigFile m_config;
@@ -75,12 +73,12 @@ private:
     Renderer m_renderer;
     ImGuiLayer m_imgui;
     RenderDocCapture m_renderdoc;
-    StatsPanel m_stats;
+    Editor m_editor;
+    SimulationControl m_sim;
     FixedStepLoop m_loop;
     Clock m_clock;
     FlyCamera m_camera;
     double m_simTime = 0.0;
-    bool m_showUI = true;
 
     Scene m_scene;
     EntityId m_spinner = 0; // 按固定步长旋转的立方体（演示渲染插值）
